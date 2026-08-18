@@ -56,4 +56,28 @@ AuthenticationEvent
 
 O parser reconhece um subconjunto explícito de mensagens de autenticação por senha do OpenSSH e traduz a sintaxe específica do Linux para o modelo normalizado. Linhas não suportadas são ignoradas, enquanto mensagens que correspondem aos eventos suportados, mas contêm dados malformados, produzem um erro de parsing.
 
-Como o timestamp syslog tradicional não contém ano nem fuso horário, essas informações são fornecidas pelo chamador. O parser não consulta o relógio nem o fuso da máquina. O futuro caminho de parsing do Windows e as etapas de detecção permanecem direções arquiteturais não vinculantes.
+Como o timestamp syslog tradicional não contém ano nem fuso horário, essas informações são fornecidas pelo chamador. O parser não consulta o relógio nem o fuso da máquina.
+
+## Caminhos de normalização por plataforma
+
+```text
+linha de autenticação SSH em log Linux
+                    |
+                    v
+LinuxAuthenticationParser
+                    |
+                    v
+AuthenticationEvent
+                    ^
+                    |
+WindowsAuthenticationParser
+                    ^
+                    |
+dados estruturados do Windows Security
+```
+
+O `WindowsAuthenticationParser` recebe dados que já foram extraídos de um evento e reconhece somente os Event IDs 4624 e 4625. Ele não acessa APIs do sistema operacional nem interpreta XML ou arquivos EVTX. Eventos não suportados são ignorados e dados inválidos em eventos suportados produzem um erro de parsing.
+
+Os parsers convergem representações específicas das plataformas para o mesmo modelo normalizado. Isso permite que futuras regras consumam `AuthenticationEvent` sem conhecer a sintaxe do OpenSSH ou a estrutura original do Windows Security.
+
+Eventos Windows também oferecem informações como Logon Type. Esse contexto não integra o modelo atual porque ainda não existe um requisito de detecção que o justifique. A futura coleta de eventos, possíveis extensões do modelo e as etapas de detecção permanecem direções arquiteturais não vinculantes.

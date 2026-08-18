@@ -10,7 +10,7 @@ O problema abordado é a dificuldade de analisar, de forma consistente, registro
 
 ## Estado atual
 
-O Milestone 2 implementa o primeiro parser específico de plataforma. Linhas de autenticação por senha do OpenSSH em logs Linux tradicionais agora podem ser convertidas no modelo normalizado e imutável. Regras de detecção, interface de linha de comando, leitura de arquivos e integrações ainda não foram implementadas.
+O Milestone 3 implementa a normalização de eventos de autenticação das duas plataformas planejadas. Linhas de autenticação por senha do OpenSSH e dados estruturados dos eventos 4624 e 4625 do Windows Security podem ser convertidos no mesmo modelo imutável. Regras de detecção, coleta nativa de eventos, interface de linha de comando e leitura de arquivos ainda não foram implementadas.
 
 ## Suporte atual
 
@@ -21,6 +21,13 @@ O parser Linux reconhece somente mensagens OpenSSH de senha claramente estrutura
 - `Failed password for invalid user`.
 
 Outras mensagens SSH e entradas de serviços como sudo, cron ou PAM permanecem fora do suporte atual. O ano e o fuso horário, ausentes no timestamp syslog tradicional, devem ser informados explicitamente ao criar o parser.
+
+O parser Windows reconhece dados estruturados previamente extraídos para:
+
+- Event ID 4624, como autenticação bem-sucedida;
+- Event ID 4625, como autenticação malsucedida.
+
+O contrato de entrada usa um mapeamento com `event_id`, `timestamp`, `username` e `source_ip` opcional. O timestamp deve ser um `datetime` com fuso horário. Acesso nativo ao Windows Event Log, ingestão de XML e suporte aos demais eventos do Windows Security ainda não foram implementados.
 
 ## Tecnologias
 
@@ -61,7 +68,7 @@ python -m pytest
 |-- .vscode/                 Configuração compartilhada do VS Code
 |-- docs/                    Documentação de arquitetura
 |-- samples/                 Amostras sintéticas e orientações de segurança
-|-- src/login_log_analyzer/  Modelo normalizado e parser Linux SSH
+|-- src/login_log_analyzer/  Modelo e parsers Linux e Windows
 |-- tests/                   Testes automatizados
 |-- pyproject.toml           Configuração central do projeto
 `-- README.md                Visão geral e instruções de desenvolvimento
