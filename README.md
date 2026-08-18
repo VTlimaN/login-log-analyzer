@@ -10,7 +10,7 @@ O problema abordado é a dificuldade de analisar, de forma consistente, registro
 
 ## Estado atual
 
-O Milestone 5 adiciona a detecção de autenticações bem-sucedidas fora de uma agenda permitida. O projeto agora normaliza eventos Linux e Windows e aplica regras de força bruta e de horário sobre o mesmo modelo. Coleta nativa de eventos, interface de linha de comando e leitura de arquivos ainda não foram implementadas.
+O Milestone 6 adiciona detecção de password spraying. O projeto agora normaliza eventos Linux e Windows e aplica regras de força bruta, password spraying e horário sobre o mesmo modelo. Coleta nativa de eventos, interface de linha de comando e leitura de arquivos ainda não foram implementadas.
 
 ## Suporte atual
 
@@ -35,7 +35,15 @@ O `BruteForceDetector` correlaciona falhas pelo username exato e pelo mesmo ende
 
 A janela inclui eventos exatamente no seu limite. Um finding é emitido quando o threshold é alcançado e eventos adicionais da mesma sequência contínua são suprimidos até existir uma lacuna maior que a janela. Autenticações bem-sucedidas não contam nem encerram a sequência, e eventos sem IP de origem são ignorados.
 
-Essa regra não detecta password spraying, pois tentativas contra usernames diferentes não são agrupadas. Ainda não existe CLI ou pipeline de ingestão de arquivos.
+A regra de força bruta mantém usernames diferentes separados: ela procura repetição contra a mesma identidade. Ainda não existe CLI ou pipeline de ingestão de arquivos.
+
+## Detecção de password spraying
+
+O `PasswordSprayDetector` correlaciona falhas pelo mesmo IP de origem e conta usernames distintos dentro de uma janela inclusiva. O threshold, com mínimo de duas identidades, e a duração da janela são configurados pela API. Repetições contra o mesmo username não aumentam a cardinalidade.
+
+Password spraying difere de força bruta porque uma origem tenta várias identidades, enquanto força bruta exige repetição contra uma identidade específica. Os usernames são comparados exatamente como normalizados, e eventos Linux e Windows podem participar da mesma sequência.
+
+Um finding é emitido ao atingir o threshold e eventos adicionais da sequência contínua são suprimidos até uma lacuna maior que a janela. Eventos de sucesso não contam nem encerram a sequência, e falhas sem IP de origem são ignoradas.
 
 ## Detecção de login fora de horário
 
@@ -84,7 +92,7 @@ python -m pytest
 |-- .vscode/                 Configuração compartilhada do VS Code
 |-- docs/                    Documentação de arquitetura
 |-- samples/                 Amostras sintéticas e orientações de segurança
-|-- src/login_log_analyzer/  Modelo, parsers e regras de detecção
+|-- src/login_log_analyzer/  Modelo, parsers e detectores de autenticação
 |-- tests/                   Testes automatizados
 |-- pyproject.toml           Configuração central do projeto
 `-- README.md                Visão geral e instruções de desenvolvimento

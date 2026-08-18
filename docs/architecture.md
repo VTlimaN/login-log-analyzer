@@ -101,7 +101,8 @@ Depois que o threshold é atingido, o detector emite um único `BruteForceFindin
 ```text
 LinuxAuthenticationParser   --\
                                 > AuthenticationEvent -> BruteForceDetector
-WindowsAuthenticationParser --/                      \-> OffHoursLoginDetector
+WindowsAuthenticationParser --/                      |-> OffHoursLoginDetector
+                                                        \-> PasswordSprayDetector
 ```
 
 O `BruteForceDetector` analisa repetições de falhas dentro de uma janela. O `OffHoursLoginDetector` avalia cada sucesso contra uma agenda explícita. Ambos permanecem independentes da plataforma porque recebem somente eventos normalizados.
@@ -109,3 +110,9 @@ O `BruteForceDetector` analisa repetições de falhas dentro de uma janela. O `O
 A agenda de login define weekdays pela convenção do Python, de segunda-feira `0` a domingo `6`, e um intervalo de horário com início incluído e fim excluído. A avaliação usa o horário de parede e o weekday do próprio timestamp, sem conversão automática para UTC.
 
 Em janelas noturnas, como `22:00 → 06:00`, o trecho a partir do início pertence ao weekday atual e o trecho antes do fim pertence ao weekday anterior. Início e fim iguais são rejeitados para evitar uma configuração ambígua. Cada sucesso fora da agenda produz um `OffHoursLoginFinding`; não existe agrupamento ou estado persistente. A estrutura de futuras regras continua não vinculante.
+
+## Detecção de password spraying
+
+Força bruta correlaciona uma origem e um username para encontrar falhas repetidas contra a mesma identidade. Password spraying correlaciona somente a origem e procura falhas contra pelo menos dois usernames distintos. Ambos utilizam janelas inclusivas e instantes absolutos.
+
+O `PasswordSprayDetector` preserva os usernames exatos e inclui no finding uma tupla ordenada das identidades que atingiram o threshold. Um único finding é emitido por sequência contínua; uma lacuna maior que a janela entre falhas da mesma origem inicia um novo episódio. Eventos Linux e Windows são tratados igualmente porque a detecção depende apenas de `AuthenticationEvent`. A estrutura de futuras regras continua não vinculante.
