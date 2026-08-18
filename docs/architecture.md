@@ -145,3 +145,26 @@ LinuxLogAnalysisResult
 O `LinuxLogFileAnalyzer` coordena leitura, parsing, contabilidade e execução dos detectores. O parser continua responsável apenas por traduzir sintaxe OpenSSH; `AuthenticationEvent` continua sendo a representação normalizada; e cada detector preserva sua própria semântica e configuração.
 
 Linhas não suportadas são contabilizadas. Erros de parsing em mensagens suportadas são registrados com número da linha e mensagem, sem copiar a linha bruta nem interromper a análise. Exceções do filesystem e de decoding não são escondidas. O resultado imutável reúne contagens, erros e findings para uma futura camada de apresentação. Ingestão Windows e uma arquitetura genérica de aplicação continuam fora do contrato atual.
+
+## Interface de linha de comando
+
+```text
+CLI analyze-linux
+        |
+        v
+composição da configuração
+        |
+        v
+LinuxLogFileAnalyzer
+        |
+        +--> LinuxAuthenticationParser --> AuthenticationEvent[]
+        |                                      |
+        |                                      +--> detectores
+        |                                               |
+        v                                               v
+LinuxLogAnalysisResult --------------------------> formatação CLI
+```
+
+A CLI é uma camada fina de apresentação e composição. Ela valida a sintaxe dos argumentos, instancia o parser e os detectores com a configuração fornecida, chama o `LinuxLogFileAnalyzer` e formata o resultado estruturado. Não contém regras de parsing nem cálculos de detecção.
+
+O parser continua responsável pela sintaxe da fonte, `AuthenticationEvent` pela normalização, os detectores pelas regras de segurança e a camada de análise pela orquestração. Essa separação permite adicionar futuras apresentações sem duplicar lógica. O comando atual cobre somente arquivos Linux; ingestão e CLI Windows permanecem trabalho futuro.

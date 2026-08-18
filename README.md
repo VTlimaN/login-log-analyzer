@@ -10,7 +10,7 @@ O problema abordado é a dificuldade de analisar, de forma consistente, registro
 
 ## Estado atual
 
-O Milestone 7 integra o parser Linux e os três detectores em uma análise programática de arquivo. O projeto lê um log Linux em UTF-8, normaliza o subconjunto OpenSSH suportado e retorna contagens, erros de parsing e findings estruturados. Interface de linha de comando e ingestão de eventos Windows ainda não foram implementadas.
+O Milestone 8 adiciona uma interface de linha de comando para a análise de arquivos Linux. O projeto lê um log Linux em UTF-8, normaliza o subconjunto OpenSSH suportado, executa os três detectores e apresenta contagens, erros de parsing e findings. Ingestão e CLI para eventos Windows ainda não foram implementadas.
 
 ## Suporte atual
 
@@ -35,7 +35,7 @@ O `BruteForceDetector` correlaciona falhas pelo username exato e pelo mesmo ende
 
 A janela inclui eventos exatamente no seu limite. Um finding é emitido quando o threshold é alcançado e eventos adicionais da mesma sequência contínua são suprimidos até existir uma lacuna maior que a janela. Autenticações bem-sucedidas não contam nem encerram a sequência, e eventos sem IP de origem são ignorados.
 
-A regra de força bruta mantém usernames diferentes separados: ela procura repetição contra a mesma identidade. Ainda não existe CLI ou pipeline de ingestão de arquivos.
+A regra de força bruta mantém usernames diferentes separados: ela procura repetição contra a mesma identidade.
 
 ## Detecção de password spraying
 
@@ -51,7 +51,7 @@ O `OffHoursLoginDetector` avalia autenticações bem-sucedidas contra weekdays e
 
 Janelas noturnas são suportadas. Em uma agenda `22:00 → 06:00`, horários a partir de 22:00 pertencem ao weekday atual e horários antes de 06:00 pertencem ao weekday anterior. O horário de parede e o weekday presentes no timezone de cada evento são preservados durante a avaliação.
 
-A regra funciona igualmente para eventos Linux e Windows, inclusive quando não há IP de origem. Não existem agendas por usuário, baseline comportamental, CLI ou pipeline de ingestão.
+A regra funciona igualmente para eventos Linux e Windows, inclusive quando não há IP de origem. Não existem agendas por usuário nem baseline comportamental.
 
 ## Análise de arquivo Linux
 
@@ -63,7 +63,7 @@ arquivo Linux -> parser SSH -> AuthenticationEvent -> detectores -> resultado es
 
 O arquivo é lido incrementalmente em UTF-8. Linhas não suportadas são contabilizadas e ignoradas. Mensagens suportadas malformadas geram erros estruturados com número da linha e mensagem, sem interromper o restante do arquivo. Falhas do filesystem e conteúdo inválido em UTF-8 continuam visíveis ao chamador.
 
-A análise ainda reconhece somente o subconjunto OpenSSH documentado. Não existe CLI, coleta Windows, leitura de EVTX ou pipeline genérico de ingestão.
+A análise ainda reconhece somente o subconjunto OpenSSH documentado. Não existe coleta Windows, leitura de EVTX ou pipeline genérico de ingestão.
 
 ## Tecnologias
 
@@ -96,6 +96,33 @@ Para executar os testes:
 ```powershell
 python -m pytest
 ```
+
+## Uso da linha de comando
+
+Com o ambiente virtual ativado, consulte a ajuda geral ou a ajuda do comando Linux:
+
+```powershell
+python -m login_log_analyzer --help
+python -m login_log_analyzer analyze-linux --help
+```
+
+O caminho do arquivo é posicional. As opções `--year` e `--timezone-offset` são obrigatórias porque o timestamp syslog tradicional não contém esse contexto:
+
+```powershell
+python -m login_log_analyzer analyze-linux samples/linux_auth.log --year 2026 --timezone-offset=-03:00
+```
+
+Offsets usam `+HH:MM` ou `-HH:MM`. Horários usam `HH:MM`, e weekdays usam os nomes `mon,tue,wed,thu,fri,sat,sun`. As configurações padrão são:
+
+- força bruta: 5 falhas em 5 minutos;
+- password spraying: 5 usernames distintos em 10 minutos;
+- agenda permitida: `mon,tue,wed,thu,fri`, das `08:00` até `18:00`, com fim exclusivo.
+
+Esses valores podem ser alterados com `--brute-force-threshold`, `--brute-force-window-minutes`, `--password-spray-threshold`, `--password-spray-window-minutes`, `--allowed-weekdays`, `--allowed-start` e `--allowed-end`.
+
+A saída apresenta contagens gerais, erros de parsing sem reproduzir a linha bruta e seções detalhadas para cada tipo de finding. O código de saída é `0` quando a análise termina, mesmo que existam findings. Argumentos ou configurações inválidas e falhas operacionais, como arquivo inexistente, retornam código diferente de zero com mensagem em stderr.
+
+Após a instalação editável, o mesmo comando também fica disponível como `login-log-analyzer`. A CLI atual analisa somente arquivos Linux com o subconjunto OpenSSH suportado. A normalização Windows existe, mas ainda não há coleta, ingestão ou comando Windows. Também não existem GUI, exportação de relatórios ou integração com SIEM.
 
 ## Estrutura inicial
 
