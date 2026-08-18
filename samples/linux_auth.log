@@ -1,0 +1,5 @@
+Aug 18 09:12:10 training-host sshd[872]: Accepted password for analyst from 192.0.2.25 port 49820 ssh2
+Aug 18 03:21:44 training-host sshd[1922]: Failed password for admin from 198.51.100.50 port 55231 ssh2
+Aug 18 03:22:01 training-host sshd[1922]: Failed password for invalid user visitor from 2001:db8::50 port 55240 ssh2
+Aug 18 09:15:00 training-host sudo: analyst : TTY=pts/0 ; COMMAND=/usr/bin/id
+

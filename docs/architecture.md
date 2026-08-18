@@ -39,3 +39,21 @@ O `AuthenticationEvent` representa atualmente:
 O modelo é imutável porque representa um fato observado. Timestamps sem fuso horário são rejeitados para evitar instantes ambíguos. O modelo preserva o offset informado pelo futuro parser e não executa conversões de fuso. Endereços IP usam os tipos da biblioteca padrão do Python, o que mantém uma representação validada sem dependências externas.
 
 Os campos atuais atendem às necessidades conhecidas de correlação por usuário e origem, análise temporal e distinção entre sucessos e falhas. Novos campos somente deverão ser incluídos quando um requisito concreto demonstrar sua necessidade. A direção futura de parsers e detecções continua não vinculante.
+
+## Caminho de parsing Linux
+
+O primeiro caminho concreto de normalização é:
+
+```text
+linha de autenticação SSH em log Linux
+                    |
+                    v
+LinuxAuthenticationParser
+                    |
+                    v
+AuthenticationEvent
+```
+
+O parser reconhece um subconjunto explícito de mensagens de autenticação por senha do OpenSSH e traduz a sintaxe específica do Linux para o modelo normalizado. Linhas não suportadas são ignoradas, enquanto mensagens que correspondem aos eventos suportados, mas contêm dados malformados, produzem um erro de parsing.
+
+Como o timestamp syslog tradicional não contém ano nem fuso horário, essas informações são fornecidas pelo chamador. O parser não consulta o relógio nem o fuso da máquina. O futuro caminho de parsing do Windows e as etapas de detecção permanecem direções arquiteturais não vinculantes.

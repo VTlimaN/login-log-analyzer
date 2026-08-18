@@ -10,7 +10,17 @@ O problema abordado é a dificuldade de analisar, de forma consistente, registro
 
 ## Estado atual
 
-O Milestone 1 implementa o modelo normalizado e imutável de eventos de autenticação. Ele representa timestamp, usuário, resultado, plataforma e endereço IP de origem opcional por meio de tipos explícitos. Parsers, regras de detecção, interface de linha de comando e integrações ainda não foram implementados.
+O Milestone 2 implementa o primeiro parser específico de plataforma. Linhas de autenticação por senha do OpenSSH em logs Linux tradicionais agora podem ser convertidas no modelo normalizado e imutável. Regras de detecção, interface de linha de comando, leitura de arquivos e integrações ainda não foram implementadas.
+
+## Suporte atual
+
+O parser Linux reconhece somente mensagens OpenSSH de senha claramente estruturadas:
+
+- `Accepted password`;
+- `Failed password`;
+- `Failed password for invalid user`.
+
+Outras mensagens SSH e entradas de serviços como sudo, cron ou PAM permanecem fora do suporte atual. O ano e o fuso horário, ausentes no timestamp syslog tradicional, devem ser informados explicitamente ao criar o parser.
 
 ## Tecnologias
 
@@ -50,8 +60,8 @@ python -m pytest
 .
 |-- .vscode/                 Configuração compartilhada do VS Code
 |-- docs/                    Documentação de arquitetura
-|-- samples/                 Orientações para amostras de logs seguras
-|-- src/login_log_analyzer/  Pacote e modelo de eventos de autenticação
+|-- samples/                 Amostras sintéticas e orientações de segurança
+|-- src/login_log_analyzer/  Modelo normalizado e parser Linux SSH
 |-- tests/                   Testes automatizados
 |-- pyproject.toml           Configuração central do projeto
 `-- README.md                Visão geral e instruções de desenvolvimento
