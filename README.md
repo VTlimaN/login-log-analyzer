@@ -10,7 +10,7 @@ O problema abordado é a dificuldade de analisar, de forma consistente, registro
 
 ## Estado atual
 
-O Milestone 0 estabelece somente a fundação de desenvolvimento. O pacote Python, o ambiente isolado, a configuração de testes e a documentação inicial estão preparados. Parsers, regras de detecção, interface de linha de comando e integrações ainda não foram implementados.
+O Milestone 1 implementa o modelo normalizado e imutável de eventos de autenticação. Ele representa timestamp, usuário, resultado, plataforma e endereço IP de origem opcional por meio de tipos explícitos. Parsers, regras de detecção, interface de linha de comando e integrações ainda não foram implementados.
 
 ## Tecnologias
 
@@ -51,11 +51,10 @@ python -m pytest
 |-- .vscode/                 Configuração compartilhada do VS Code
 |-- docs/                    Documentação de arquitetura
 |-- samples/                 Orientações para amostras de logs seguras
-|-- src/login_log_analyzer/  Pacote Python da aplicação
+|-- src/login_log_analyzer/  Pacote e modelo de eventos de autenticação
 |-- tests/                   Testes automatizados
 |-- pyproject.toml           Configuração central do projeto
 `-- README.md                Visão geral e instruções de desenvolvimento
 ```
 
 A direção arquitetural inicial está descrita em [docs/architecture.md](docs/architecture.md).
-

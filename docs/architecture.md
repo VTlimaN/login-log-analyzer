@@ -24,3 +24,18 @@ Essa separação também preserva as responsabilidades: componentes específicos
 
 Este documento registra uma direção arquitetural, não um contrato de implementação permanentemente congelado. Interfaces, modelos e limites entre componentes serão definidos somente quando os requisitos concretos dos próximos milestones justificarem essas decisões.
 
+## Modelo normalizado atual
+
+Normalizar um evento significa converter informações relevantes de formatos diferentes para uma representação comum. Assim, eventos equivalentes do Windows e do Linux poderão ser analisados sem que as futuras regras de detecção precisem conhecer a sintaxe original de cada log.
+
+O `AuthenticationEvent` representa atualmente:
+
+- `timestamp`: instante do evento como `datetime` com informação explícita de fuso horário;
+- `username`: identidade usada na tentativa de autenticação;
+- `outcome`: resultado fechado em sucesso ou falha;
+- `platform`: plataforma de origem fechada em Linux ou Windows;
+- `source_ip`: endereço IPv4 ou IPv6 de origem, opcional quando o evento não fornece um endereço significativo.
+
+O modelo é imutável porque representa um fato observado. Timestamps sem fuso horário são rejeitados para evitar instantes ambíguos. O modelo preserva o offset informado pelo futuro parser e não executa conversões de fuso. Endereços IP usam os tipos da biblioteca padrão do Python, o que mantém uma representação validada sem dependências externas.
+
+Os campos atuais atendem às necessidades conhecidas de correlação por usuário e origem, análise temporal e distinção entre sucessos e falhas. Novos campos somente deverão ser incluídos quando um requisito concreto demonstrar sua necessidade. A direção futura de parsers e detecções continua não vinculante.
