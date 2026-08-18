@@ -95,3 +95,17 @@ Parsing interpreta a representação específica de cada plataforma. Normalizaç
 A regra atual correlaciona falhas pela combinação exata de username e endereço IP de origem. Ela exige um número configurável de falhas dentro de uma janela inclusiva e compara instantes absolutos mesmo quando os eventos usam offsets diferentes. Sucessos não contam nem encerram a sequência, e eventos sem IP não participam da regra.
 
 Depois que o threshold é atingido, o detector emite um único `BruteForceFinding` para a sequência contínua. Uma nova sequência para a mesma chave começa somente após uma lacuna maior que a janela entre falhas. Essa política evita findings repetidos para janelas sobrepostas sem introduzir estado persistente. A organização de futuras regras continua não vinculante.
+
+## Detecção por eventos normalizados
+
+```text
+LinuxAuthenticationParser   --\
+                                > AuthenticationEvent -> BruteForceDetector
+WindowsAuthenticationParser --/                      \-> OffHoursLoginDetector
+```
+
+O `BruteForceDetector` analisa repetições de falhas dentro de uma janela. O `OffHoursLoginDetector` avalia cada sucesso contra uma agenda explícita. Ambos permanecem independentes da plataforma porque recebem somente eventos normalizados.
+
+A agenda de login define weekdays pela convenção do Python, de segunda-feira `0` a domingo `6`, e um intervalo de horário com início incluído e fim excluído. A avaliação usa o horário de parede e o weekday do próprio timestamp, sem conversão automática para UTC.
+
+Em janelas noturnas, como `22:00 → 06:00`, o trecho a partir do início pertence ao weekday atual e o trecho antes do fim pertence ao weekday anterior. Início e fim iguais são rejeitados para evitar uma configuração ambígua. Cada sucesso fora da agenda produz um `OffHoursLoginFinding`; não existe agrupamento ou estado persistente. A estrutura de futuras regras continua não vinculante.

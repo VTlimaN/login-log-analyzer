@@ -10,7 +10,7 @@ O problema abordado é a dificuldade de analisar, de forma consistente, registro
 
 ## Estado atual
 
-O Milestone 4 adiciona a primeira regra de detecção sobre os eventos normalizados. Além da normalização de autenticações Linux e Windows, o projeto agora identifica sequências de falhas que podem representar força bruta. Coleta nativa de eventos, interface de linha de comando e leitura de arquivos ainda não foram implementadas.
+O Milestone 5 adiciona a detecção de autenticações bem-sucedidas fora de uma agenda permitida. O projeto agora normaliza eventos Linux e Windows e aplica regras de força bruta e de horário sobre o mesmo modelo. Coleta nativa de eventos, interface de linha de comando e leitura de arquivos ainda não foram implementadas.
 
 ## Suporte atual
 
@@ -36,6 +36,14 @@ O `BruteForceDetector` correlaciona falhas pelo username exato e pelo mesmo ende
 A janela inclui eventos exatamente no seu limite. Um finding é emitido quando o threshold é alcançado e eventos adicionais da mesma sequência contínua são suprimidos até existir uma lacuna maior que a janela. Autenticações bem-sucedidas não contam nem encerram a sequência, e eventos sem IP de origem são ignorados.
 
 Essa regra não detecta password spraying, pois tentativas contra usernames diferentes não são agrupadas. Ainda não existe CLI ou pipeline de ingestão de arquivos.
+
+## Detecção de login fora de horário
+
+O `OffHoursLoginDetector` avalia autenticações bem-sucedidas contra weekdays e horários configurados pela API. A convenção de weekdays segue o Python, de segunda-feira `0` a domingo `6`. O início da janela é incluído e o fim é excluído.
+
+Janelas noturnas são suportadas. Em uma agenda `22:00 → 06:00`, horários a partir de 22:00 pertencem ao weekday atual e horários antes de 06:00 pertencem ao weekday anterior. O horário de parede e o weekday presentes no timezone de cada evento são preservados durante a avaliação.
+
+A regra funciona igualmente para eventos Linux e Windows, inclusive quando não há IP de origem. Não existem agendas por usuário, baseline comportamental, CLI ou pipeline de ingestão.
 
 ## Tecnologias
 
@@ -76,7 +84,7 @@ python -m pytest
 |-- .vscode/                 Configuração compartilhada do VS Code
 |-- docs/                    Documentação de arquitetura
 |-- samples/                 Amostras sintéticas e orientações de segurança
-|-- src/login_log_analyzer/  Modelo, parsers e detecção de força bruta
+|-- src/login_log_analyzer/  Modelo, parsers e regras de detecção
 |-- tests/                   Testes automatizados
 |-- pyproject.toml           Configuração central do projeto
 `-- README.md                Visão geral e instruções de desenvolvimento
