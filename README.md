@@ -10,7 +10,7 @@ O problema abordado é a dificuldade de analisar, de forma consistente, registro
 
 ## Estado atual
 
-O Milestone 3 implementa a normalização de eventos de autenticação das duas plataformas planejadas. Linhas de autenticação por senha do OpenSSH e dados estruturados dos eventos 4624 e 4625 do Windows Security podem ser convertidos no mesmo modelo imutável. Regras de detecção, coleta nativa de eventos, interface de linha de comando e leitura de arquivos ainda não foram implementadas.
+O Milestone 4 adiciona a primeira regra de detecção sobre os eventos normalizados. Além da normalização de autenticações Linux e Windows, o projeto agora identifica sequências de falhas que podem representar força bruta. Coleta nativa de eventos, interface de linha de comando e leitura de arquivos ainda não foram implementadas.
 
 ## Suporte atual
 
@@ -28,6 +28,14 @@ O parser Windows reconhece dados estruturados previamente extraídos para:
 - Event ID 4625, como autenticação malsucedida.
 
 O contrato de entrada usa um mapeamento com `event_id`, `timestamp`, `username` e `source_ip` opcional. O timestamp deve ser um `datetime` com fuso horário. Acesso nativo ao Windows Event Log, ingestão de XML e suporte aos demais eventos do Windows Security ainda não foram implementados.
+
+## Detecção de força bruta
+
+O `BruteForceDetector` correlaciona falhas pelo username exato e pelo mesmo endereço IP de origem. O número mínimo de falhas e a janela de tempo são configurados ao criar o detector. Eventos Linux e Windows podem participar da mesma correlação porque a regra consome somente `AuthenticationEvent`.
+
+A janela inclui eventos exatamente no seu limite. Um finding é emitido quando o threshold é alcançado e eventos adicionais da mesma sequência contínua são suprimidos até existir uma lacuna maior que a janela. Autenticações bem-sucedidas não contam nem encerram a sequência, e eventos sem IP de origem são ignorados.
+
+Essa regra não detecta password spraying, pois tentativas contra usernames diferentes não são agrupadas. Ainda não existe CLI ou pipeline de ingestão de arquivos.
 
 ## Tecnologias
 
@@ -68,7 +76,7 @@ python -m pytest
 |-- .vscode/                 Configuração compartilhada do VS Code
 |-- docs/                    Documentação de arquitetura
 |-- samples/                 Amostras sintéticas e orientações de segurança
-|-- src/login_log_analyzer/  Modelo e parsers Linux e Windows
+|-- src/login_log_analyzer/  Modelo, parsers e detecção de força bruta
 |-- tests/                   Testes automatizados
 |-- pyproject.toml           Configuração central do projeto
 `-- README.md                Visão geral e instruções de desenvolvimento

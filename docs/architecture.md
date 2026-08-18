@@ -81,3 +81,17 @@ O `WindowsAuthenticationParser` recebe dados que já foram extraídos de um even
 Os parsers convergem representações específicas das plataformas para o mesmo modelo normalizado. Isso permite que futuras regras consumam `AuthenticationEvent` sem conhecer a sintaxe do OpenSSH ou a estrutura original do Windows Security.
 
 Eventos Windows também oferecem informações como Logon Type. Esse contexto não integra o modelo atual porque ainda não existe um requisito de detecção que o justifique. A futura coleta de eventos, possíveis extensões do modelo e as etapas de detecção permanecem direções arquiteturais não vinculantes.
+
+## Detecção de força bruta
+
+```text
+LinuxAuthenticationParser   --\
+                                > AuthenticationEvent -> BruteForceDetector -> BruteForceFinding
+WindowsAuthenticationParser --/
+```
+
+Parsing interpreta a representação específica de cada plataforma. Normalização converte os dados extraídos para `AuthenticationEvent`. Detecção opera somente sobre esses eventos e, por isso, não precisa conhecer formatos OpenSSH ou Windows Security.
+
+A regra atual correlaciona falhas pela combinação exata de username e endereço IP de origem. Ela exige um número configurável de falhas dentro de uma janela inclusiva e compara instantes absolutos mesmo quando os eventos usam offsets diferentes. Sucessos não contam nem encerram a sequência, e eventos sem IP não participam da regra.
+
+Depois que o threshold é atingido, o detector emite um único `BruteForceFinding` para a sequência contínua. Uma nova sequência para a mesma chave começa somente após uma lacuna maior que a janela entre falhas. Essa política evita findings repetidos para janelas sobrepostas sem introduzir estado persistente. A organização de futuras regras continua não vinculante.
