@@ -116,3 +116,32 @@ Em janelas noturnas, como `22:00 → 06:00`, o trecho a partir do início perten
 Força bruta correlaciona uma origem e um username para encontrar falhas repetidas contra a mesma identidade. Password spraying correlaciona somente a origem e procura falhas contra pelo menos dois usernames distintos. Ambos utilizam janelas inclusivas e instantes absolutos.
 
 O `PasswordSprayDetector` preserva os usernames exatos e inclui no finding uma tupla ordenada das identidades que atingiram o threshold. Um único finding é emitido por sequência contínua; uma lacuna maior que a janela entre falhas da mesma origem inicia um novo episódio. Eventos Linux e Windows são tratados igualmente porque a detecção depende apenas de `AuthenticationEvent`. A estrutura de futuras regras continua não vinculante.
+
+## Análise de arquivo Linux
+
+```text
+arquivo de autenticação Linux
+            |
+            v
+LinuxLogFileAnalyzer
+            |
+            v
+leitura linha a linha em UTF-8
+            |
+            v
+LinuxAuthenticationParser
+            |
+            v
+AuthenticationEvent[]
+            |
+            +--> BruteForceDetector
+            +--> OffHoursLoginDetector
+            +--> PasswordSprayDetector
+            |
+            v
+LinuxLogAnalysisResult
+```
+
+O `LinuxLogFileAnalyzer` coordena leitura, parsing, contabilidade e execução dos detectores. O parser continua responsável apenas por traduzir sintaxe OpenSSH; `AuthenticationEvent` continua sendo a representação normalizada; e cada detector preserva sua própria semântica e configuração.
+
+Linhas não suportadas são contabilizadas. Erros de parsing em mensagens suportadas são registrados com número da linha e mensagem, sem copiar a linha bruta nem interromper a análise. Exceções do filesystem e de decoding não são escondidas. O resultado imutável reúne contagens, erros e findings para uma futura camada de apresentação. Ingestão Windows e uma arquitetura genérica de aplicação continuam fora do contrato atual.

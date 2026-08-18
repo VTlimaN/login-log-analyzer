@@ -10,7 +10,7 @@ O problema abordado é a dificuldade de analisar, de forma consistente, registro
 
 ## Estado atual
 
-O Milestone 6 adiciona detecção de password spraying. O projeto agora normaliza eventos Linux e Windows e aplica regras de força bruta, password spraying e horário sobre o mesmo modelo. Coleta nativa de eventos, interface de linha de comando e leitura de arquivos ainda não foram implementadas.
+O Milestone 7 integra o parser Linux e os três detectores em uma análise programática de arquivo. O projeto lê um log Linux em UTF-8, normaliza o subconjunto OpenSSH suportado e retorna contagens, erros de parsing e findings estruturados. Interface de linha de comando e ingestão de eventos Windows ainda não foram implementadas.
 
 ## Suporte atual
 
@@ -52,6 +52,18 @@ O `OffHoursLoginDetector` avalia autenticações bem-sucedidas contra weekdays e
 Janelas noturnas são suportadas. Em uma agenda `22:00 → 06:00`, horários a partir de 22:00 pertencem ao weekday atual e horários antes de 06:00 pertencem ao weekday anterior. O horário de parede e o weekday presentes no timezone de cada evento são preservados durante a avaliação.
 
 A regra funciona igualmente para eventos Linux e Windows, inclusive quando não há IP de origem. Não existem agendas por usuário, baseline comportamental, CLI ou pipeline de ingestão.
+
+## Análise de arquivo Linux
+
+O `LinuxLogFileAnalyzer` recebe um `Path`, um `LinuxAuthenticationParser` já configurado e instâncias configuradas dos três detectores. O fluxo atual é:
+
+```text
+arquivo Linux -> parser SSH -> AuthenticationEvent -> detectores -> resultado estruturado
+```
+
+O arquivo é lido incrementalmente em UTF-8. Linhas não suportadas são contabilizadas e ignoradas. Mensagens suportadas malformadas geram erros estruturados com número da linha e mensagem, sem interromper o restante do arquivo. Falhas do filesystem e conteúdo inválido em UTF-8 continuam visíveis ao chamador.
+
+A análise ainda reconhece somente o subconjunto OpenSSH documentado. Não existe CLI, coleta Windows, leitura de EVTX ou pipeline genérico de ingestão.
 
 ## Tecnologias
 
