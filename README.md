@@ -8,17 +8,18 @@ A versão declarada no pacote é `0.1.0`. O repositório está preparado como ca
 
 - parsing de autenticação por senha do OpenSSH em logs Linux tradicionais;
 - normalização dos Windows Security Event IDs 4624 e 4625 a partir de JSON estruturado ou coleta nativa local;
-- detecção de força bruta, password spraying e login fora do horário;
+- detecção de força bruta, password spraying, login fora do horário e login bem-sucedido após falhas repetidas;
 - pipelines de análise de arquivo com erros recuperáveis estruturados;
 - comandos de terminal para análise Linux, Windows JSON e Windows Security Event Log;
 - exportação opcional de relatórios em JSON e CSV;
 - suporte a IPv4, IPv6 e timestamps com fuso horário explícito.
 
-Os três detectores operam sobre `AuthenticationEvent`, sem depender da sintaxe original do Linux ou do Windows:
+Os quatro detectores operam sobre `AuthenticationEvent`, sem depender da sintaxe original do Linux ou do Windows:
 
 - **Força bruta:** falhas repetidas para o mesmo username exato, originadas do mesmo IP, dentro de uma janela configurável.
 - **Password spraying:** falhas do mesmo IP contra vários usernames distintos dentro de uma janela configurável.
 - **Login fora do horário:** autenticação bem-sucedida fora dos weekdays e do intervalo diário permitidos.
+- **Login bem-sucedido após falhas repetidas:** sucesso precedido por uma quantidade configurável de falhas para o mesmo username exato e IP dentro da janela configurada. É um indicador heurístico de possível adivinhação bem-sucedida de credenciais, não uma prova de comprometimento.
 
 ## Arquitetura
 
@@ -127,6 +128,7 @@ Os três comandos compartilham os seguintes defaults e opções de detecção:
 | Força bruta | 5 falhas em 5 minutos | `--brute-force-threshold`, `--brute-force-window-minutes` |
 | Password spraying | 5 usernames em 10 minutos | `--password-spray-threshold`, `--password-spray-window-minutes` |
 | Horário permitido | `mon,tue,wed,thu,fri`, `08:00`–`18:00` | `--allowed-weekdays`, `--allowed-start`, `--allowed-end` |
+| Sucesso após falhas | 5 falhas em 5 minutos | `--success-after-failures-threshold`, `--success-after-failures-window-minutes` |
 
 Weekdays usam `mon,tue,wed,thu,fri,sat,sun`; horários usam `HH:MM` em formato de 24 horas. O início do horário permitido é inclusivo e o fim é exclusivo. Consulte o `--help` do subcomando para a lista autoritativa de opções.
 
@@ -151,7 +153,7 @@ O JSON é o relatório estruturado completo: inclui resumo, erros recuperáveis 
 
 Por segurança, um destino existente é rejeitado. `--overwrite` permite sua substituição explícita. Os destinos JSON e CSV devem ser diferentes e seus diretórios-pai precisam existir.
 
-O contrato inicial usa `report_version` igual a `1`. Os identificadores de origem são `linux_file`, `windows_json` e `windows_native`; os tipos de achado são `brute_force`, `off_hours` e `password_spray`. Timestamps permanecem em ISO 8601 com seus offsets, IPs são strings e uma origem ausente é representada como `null` no JSON ou campo vazio no CSV.
+O contrato inicial usa `report_version` igual a `1`. Os identificadores de origem são `linux_file`, `windows_json` e `windows_native`; os tipos de achado são `brute_force`, `off_hours`, `password_spray` e `successful_login_after_failures`. Timestamps permanecem em ISO 8601 com seus offsets, IPs são strings e uma origem ausente é representada como `null` no JSON ou campo vazio no CSV. O novo finding usa as colunas CSV `first_failure`, `last_failure` e `successful_login`; as demais categorias deixam esses campos vazios.
 
 ## Demonstração reproduzível
 

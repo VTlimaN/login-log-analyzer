@@ -18,6 +18,10 @@ from login_log_analyzer.password_spray import (
     PasswordSprayDetector,
     PasswordSprayFinding,
 )
+from login_log_analyzer.success_after_failures import (
+    SuccessfulLoginAfterFailuresDetector,
+    SuccessfulLoginAfterFailuresFinding,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +39,10 @@ class LinuxLogAnalysisResult:
     brute_force_findings: tuple[BruteForceFinding, ...]
     off_hours_findings: tuple[OffHoursLoginFinding, ...]
     password_spray_findings: tuple[PasswordSprayFinding, ...]
+    successful_login_after_failures_findings: tuple[
+        SuccessfulLoginAfterFailuresFinding,
+        ...,
+    ]
 
     @property
     def parse_error_count(self) -> int:
@@ -48,11 +56,15 @@ class LinuxLogFileAnalyzer:
         brute_force_detector: BruteForceDetector,
         off_hours_detector: OffHoursLoginDetector,
         password_spray_detector: PasswordSprayDetector,
+        successful_login_after_failures_detector: SuccessfulLoginAfterFailuresDetector,
     ) -> None:
         self._parser = parser
         self._brute_force_detector = brute_force_detector
         self._off_hours_detector = off_hours_detector
         self._password_spray_detector = password_spray_detector
+        self._successful_login_after_failures_detector = (
+            successful_login_after_failures_detector
+        )
 
     def analyze(self, path: Path) -> LinuxLogAnalysisResult:
         events: list[AuthenticationEvent] = []
@@ -96,6 +108,11 @@ class LinuxLogFileAnalyzer:
             ),
             password_spray_findings=tuple(
                 self._password_spray_detector.detect(normalized_events)
+            ),
+            successful_login_after_failures_findings=tuple(
+                self._successful_login_after_failures_detector.detect(
+                    normalized_events
+                )
             ),
         )
 

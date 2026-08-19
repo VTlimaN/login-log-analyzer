@@ -9,6 +9,9 @@ from login_log_analyzer.brute_force import BruteForceFinding
 from login_log_analyzer.linux_file_analysis import LinuxLogAnalysisResult
 from login_log_analyzer.off_hours import OffHoursLoginFinding
 from login_log_analyzer.password_spray import PasswordSprayFinding
+from login_log_analyzer.success_after_failures import (
+    SuccessfulLoginAfterFailuresFinding,
+)
 from login_log_analyzer.windows_json_analysis import WindowsJsonAnalysisResult
 from login_log_analyzer.windows_native_analysis import WindowsNativeAnalysisResult
 
@@ -25,6 +28,9 @@ CSV_COLUMNS = (
     "failure_count",
     "distinct_username_count",
     "usernames",
+    "first_failure",
+    "last_failure",
+    "successful_login",
 )
 
 AnalysisResult = (
@@ -94,6 +100,9 @@ def _json_document(result: AnalysisResult) -> dict[str, object]:
             "brute_force_finding_count": len(result.brute_force_findings),
             "off_hours_finding_count": len(result.off_hours_findings),
             "password_spray_finding_count": len(result.password_spray_findings),
+            "successful_login_after_failures_finding_count": len(
+                result.successful_login_after_failures_findings
+            ),
         }
     )
     return {
@@ -112,6 +121,10 @@ def _json_document(result: AnalysisResult) -> dict[str, object]:
             "password_spray": [
                 _password_spray_json(finding)
                 for finding in result.password_spray_findings
+            ],
+            "successful_login_after_failures": [
+                _successful_login_after_failures_json(finding)
+                for finding in result.successful_login_after_failures_findings
             ],
         },
     }
@@ -196,12 +209,30 @@ def _password_spray_json(finding: PasswordSprayFinding) -> dict[str, object]:
     }
 
 
+def _successful_login_after_failures_json(
+    finding: SuccessfulLoginAfterFailuresFinding,
+) -> dict[str, object]:
+    return {
+        "username": finding.username,
+        "source_ip": str(finding.source_ip),
+        "first_failure": finding.first_failure.isoformat(),
+        "last_failure": finding.last_failure.isoformat(),
+        "successful_login": finding.successful_login.isoformat(),
+        "failure_count": finding.failure_count,
+        "platform": finding.platform.value,
+    }
+
+
 def _csv_rows(result: AnalysisResult) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     rows.extend(_brute_force_csv(finding) for finding in result.brute_force_findings)
     rows.extend(_off_hours_csv(finding) for finding in result.off_hours_findings)
     rows.extend(
         _password_spray_csv(finding) for finding in result.password_spray_findings
+    )
+    rows.extend(
+        _successful_login_after_failures_csv(finding)
+        for finding in result.successful_login_after_failures_findings
     )
     return rows
 
@@ -251,6 +282,25 @@ def _password_spray_csv(finding: PasswordSprayFinding) -> dict[str, object]:
             "last_observed": finding.last_observed.isoformat(),
             "distinct_username_count": finding.distinct_username_count,
             "usernames": ";".join(finding.usernames),
+        }
+    )
+    return row
+
+
+def _successful_login_after_failures_csv(
+    finding: SuccessfulLoginAfterFailuresFinding,
+) -> dict[str, object]:
+    row = _empty_csv_row()
+    row.update(
+        {
+            "finding_type": "successful_login_after_failures",
+            "username": finding.username,
+            "source_ip": str(finding.source_ip),
+            "platform": finding.platform.value,
+            "first_failure": finding.first_failure.isoformat(),
+            "last_failure": finding.last_failure.isoformat(),
+            "successful_login": finding.successful_login.isoformat(),
+            "failure_count": finding.failure_count,
         }
     )
     return row

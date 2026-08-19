@@ -11,6 +11,7 @@ CLI analyze-windows-native -> WindowsNativeEventAnalyzer -> WindowsAuthenticatio
                                                                                                          +-> BruteForceDetector
                                                                                                          +-> OffHoursLoginDetector
                                                                                                          +-> PasswordSprayDetector
+                                                                                                         +-> SuccessfulLoginAfterFailuresDetector
                                                                                                                  |
                                                                                                                  v
                                                                                                       resultado estruturado
@@ -87,6 +88,12 @@ Todos os detectores recebem a mesma coleção de `AuthenticationEvent` e não co
 
 `OffHoursLoginDetector` avalia somente sucessos contra weekdays e horários permitidos. O intervalo diário inclui o início e exclui o fim. Janelas que atravessam meia-noite usam o weekday de início: a parte após meia-noite pertence à janela iniciada no dia anterior. A avaliação usa o horário de parede e o timezone representados pelo evento.
 
+### Login bem-sucedido após falhas repetidas
+
+`SuccessfulLoginAfterFailuresDetector` correlaciona falhas e um sucesso posterior pelo username exato e IP de origem. A janela inclusiva usa instantes absolutos, e eventos sem IP não participam. Falhas com o mesmo timestamp absoluto do sucesso não contam como anteriores. Um sucesso sempre encerra a sequência daquela chave: quando o threshold foi atingido, ele produz um finding; caso contrário, apenas reinicia o estado temporário. A plataforma preservada é a do evento de sucesso, mas não faz parte da correlação.
+
+O detector é stateless entre chamadas e heurístico. O finding indica que tentativas repetidas foram seguidas por autenticação bem-sucedida, sem afirmar comprometimento da conta.
+
 ## Resultados e erros
 
 Os resultados Linux e Windows são dataclasses imutáveis com contagens, erros recuperáveis e findings separados por detector. Eles permanecem específicos para que linhas Linux e registros Windows sejam descritos com precisão.
@@ -97,7 +104,9 @@ Falhas de filesystem e decoding não são confundidas com registros malformados.
 
 A camada `reporting` recebe um resultado de análise concluído e permanece a jusante de ingestão, normalização e detecção. Ela não altera eventos nem findings.
 
-O JSON representa o resultado completo com `report_version` 1, origem, resumo, erros recuperáveis e categorias de findings. As origens estáveis são `linux_file`, `windows_json` e `windows_native`. O CSV representa somente findings em colunas unificadas, usando os tipos `brute_force`, `off_hours` e `password_spray`; campos não aplicáveis permanecem vazios.
+O JSON representa o resultado completo com `report_version` 1, origem, resumo, erros recuperáveis e categorias de findings. As origens estáveis são `linux_file`, `windows_json` e `windows_native`. O CSV representa somente findings em colunas unificadas, usando os tipos `brute_force`, `off_hours`, `password_spray` e `successful_login_after_failures`; campos não aplicáveis permanecem vazios. O quarto tipo acrescenta `first_failure`, `last_failure` e `successful_login` ao conjunto unificado de colunas.
+
+`report_version` permanece em 1 porque categorias de finding e colunas adicionais são extensões aditivas do contrato, que já separa findings por tipo. Nenhuma chave existente foi removida ou teve semântica alterada.
 
 Ambos usam UTF-8 e timestamps ISO 8601 sem conversão para o timezone da máquina. A gravação ocorre primeiro em arquivo temporário no diretório de destino e depois por substituição atômica. Destinos existentes são preservados por padrão e só podem ser substituídos por solicitação explícita.
 

@@ -13,6 +13,9 @@ from login_log_analyzer.authentication import (
 from login_log_analyzer.brute_force import BruteForceDetector
 from login_log_analyzer.off_hours import OffHoursLoginDetector
 from login_log_analyzer.password_spray import PasswordSprayDetector
+from login_log_analyzer.success_after_failures import (
+    SuccessfulLoginAfterFailuresDetector,
+)
 from login_log_analyzer.windows_authentication import WindowsAuthenticationParser
 from login_log_analyzer.windows_native_analysis import (
     WINDOWS_SECURITY_QUERY,
@@ -96,6 +99,7 @@ def create_recording_analyzer(
         brute_force_detector=detector,
         off_hours_detector=RecordingDetector(),
         password_spray_detector=RecordingDetector(),
+        successful_login_after_failures_detector=RecordingDetector(),
     )
     return analyzer, collector, detector
 
@@ -118,6 +122,12 @@ def create_detection_analyzer(
         password_spray_detector=PasswordSprayDetector(
             username_threshold=3,
             window=timedelta(minutes=5),
+        ),
+        successful_login_after_failures_detector=(
+            SuccessfulLoginAfterFailuresDetector(
+                failure_threshold=3,
+                window=timedelta(minutes=5),
+            )
         ),
     )
 
@@ -392,7 +402,32 @@ def test_native_result_and_record_errors_are_immutable() -> None:
     result = analyzer.analyze()
 
     assert isinstance(result, WindowsNativeAnalysisResult)
+    assert isinstance(result.successful_login_after_failures_findings, tuple)
     with pytest.raises(FrozenInstanceError):
         result.collected_record_count = 2
     with pytest.raises(FrozenInstanceError):
         result.record_errors[0].record_number = 2
+
+
+def test_native_pipeline_detects_successful_login_after_failures() -> None:
+    records = tuple(
+        create_record(
+            event_id=4625,
+            timestamp=f"2026-08-18T09:0{minute}:00+00:00",
+            username="Admin",
+            source_ip="192.0.2.50",
+        )
+        for minute in range(3)
+    ) + (
+        create_record(
+            event_id=4624,
+            timestamp="2026-08-18T09:03:00+00:00",
+            username="Admin",
+            source_ip="192.0.2.50",
+        ),
+    )
+
+    result = create_detection_analyzer(records).analyze()
+
+    assert len(result.successful_login_after_failures_findings) == 1
+    assert result.successful_login_after_failures_findings[0].failure_count == 3
