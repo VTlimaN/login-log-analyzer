@@ -14,14 +14,15 @@ CLI analyze-windows-native -> WindowsNativeEventAnalyzer -> WindowsAuthenticatio
                                                                                                                  |
                                                                                                                  v
                                                                                                       resultado estruturado
-                                                                                                                 |
-                                                                                                                 v
-                                                                                                         relatório da CLI
+                                                                                                         /          \
+                                                                                              relatório da CLI   serialização
+                                                                                                                  /       \
+                                                                                                               JSON       CSV
 ```
 
 As responsabilidades são:
 
-- **CLI:** valida argumentos, compõe objetos configurados, inicia a análise e formata o resultado;
+- **CLI:** valida argumentos, compõe objetos configurados, inicia a análise, formata o resultado e solicita exportações opcionais;
 - **analisadores de arquivo:** leem a fonte, coordenam parsing e detectores e produzem um resultado estruturado;
 - **parsers:** traduzem a representação específica da fonte;
 - **`AuthenticationEvent`:** representa a semântica comum de autenticação;
@@ -92,6 +93,14 @@ Os resultados Linux e Windows são dataclasses imutáveis com contagens, erros r
 
 Falhas de filesystem e decoding não são confundidas com registros malformados. Na CLI, uma análise concluída retorna `0`, mesmo com findings ou erros recuperáveis. Falhas operacionais retornam `1`, e argumentos ou configurações inválidas retornam `2`. Mensagens de erro não reproduzem a linha ou o objeto bruto potencialmente sensível.
 
+## Relatórios
+
+A camada `reporting` recebe um resultado de análise concluído e permanece a jusante de ingestão, normalização e detecção. Ela não altera eventos nem findings.
+
+O JSON representa o resultado completo com `report_version` 1, origem, resumo, erros recuperáveis e categorias de findings. As origens estáveis são `linux_file`, `windows_json` e `windows_native`. O CSV representa somente findings em colunas unificadas, usando os tipos `brute_force`, `off_hours` e `password_spray`; campos não aplicáveis permanecem vazios.
+
+Ambos usam UTF-8 e timestamps ISO 8601 sem conversão para o timezone da máquina. A gravação ocorre primeiro em arquivo temporário no diretório de destino e depois por substituição atômica. Destinos existentes são preservados por padrão e só podem ser substituídos por solicitação explícita.
+
 ## Limites arquiteturais
 
-A aplicação não implementa EVTX, coleta Windows remota, persistência, exportação de relatório ou integração com SIEM. Os detectores mantêm semânticas explícitas e independentes; não há framework genérico de plugins ou estado persistente de incidentes. Extensões do modelo e dos fluxos devem ser justificadas por requisitos concretos.
+A aplicação não implementa EVTX, coleta Windows remota, persistência, formatos de relatório além de JSON/CSV ou integração com SIEM. Os detectores mantêm semânticas explícitas e independentes; não há framework genérico de plugins ou estado persistente de incidentes. Extensões do modelo e dos fluxos devem ser justificadas por requisitos concretos.
