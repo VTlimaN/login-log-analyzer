@@ -5,16 +5,24 @@ O projeto separa ingestão, normalização, detecção, orquestração e apresen
 ## Visão geral
 
 ```text
-Linux -> LinuxAuthenticationParser -> AuthenticationEvent[] -> detectores heurísticos -------------------------\
-Windows JSON/nativo -> roteamento -> 4624/4625 -> WindowsAuthenticationParser -> AuthenticationEvent[] --------> resultado
-                                  |-> 4740 -> WindowsAccountLockoutParser -> AccountLockoutEvent[] -------------/
-                                  \-> lifecycle IDs -> WindowsAccountLifecycleParser -> AccountLifecycleEvent[] /
-                                                                                                                  |
-                                  BruteForceFinding + AccountLockoutEvent -> correlator -> finding correlacionado
-                                                                                                                  |
-                                                                                                       CLI / serialização
-                                                                                                            /       \
-                                                                                               JSON completo       CSV findings
+fontes Linux e Windows
+        ↓
+adaptação e parsing por formato
+        ↓
+normalização
+        ├── AuthenticationEvent ──> detectores heurísticos ──> findings
+        ├── AccountLockoutEvent ─────────────────────────────> observações diretas
+        └── AccountLifecycleEvent ───────────────────────────> observações diretas
+
+BruteForceFinding + AccountLockoutEvent
+        ↓
+BruteForceAccountLockoutCorrelator
+        ↓
+finding correlacionado
+
+resultados de análise
+        ↓
+CLI / JSON completo / CSV de findings
 ```
 
 As responsabilidades são:
@@ -25,7 +33,7 @@ As responsabilidades são:
 - **`AuthenticationEvent`:** representa a semântica comum de autenticação de Linux e Windows 4624/4625;
 - **`AccountLockoutEvent`:** representa uma observação direta de bloqueio Windows 4740;
 - **`AccountLifecycleEvent`:** representa uma transição explícita de ciclo de vida de conta Windows;
-- **detectores:** aplicam regras heurísticas somente aos `AuthenticationEvent` normalizados.
+- **detectores:** aplicam regras heurísticas somente aos `AuthenticationEvent` normalizados;
 - **correlator:** associa `BruteForceFinding` e `AccountLockoutEvent` sem alterar os sinais de origem.
 
 ## Normalização
@@ -127,4 +135,4 @@ Ambos usam UTF-8 e timestamps ISO 8601 sem conversão para o timezone da máquin
 
 ## Limites arquiteturais
 
-A aplicação não implementa EVTX, coleta Windows remota, persistência, formatos de relatório além de JSON/CSV ou integração com SIEM. Os detectores mantêm semânticas explícitas e independentes; não há framework genérico de plugins ou estado persistente de incidentes. Extensões do modelo e dos fluxos devem ser justificadas por requisitos concretos.
+A aplicação não implementa EVTX, coleta Windows remota, persistência, transporte de alertas, formatos de relatório além de JSON/CSV, integração com SIEM ou enriquecimento por threat intelligence. Os detectores mantêm semânticas explícitas e independentes; não há framework genérico de plugins, engine genérica de correlação ou estado persistente de incidentes.
