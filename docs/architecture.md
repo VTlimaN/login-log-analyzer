@@ -144,7 +144,38 @@ LinuxLogAnalysisResult
 
 O `LinuxLogFileAnalyzer` coordena leitura, parsing, contabilidade e execução dos detectores. O parser continua responsável apenas por traduzir sintaxe OpenSSH; `AuthenticationEvent` continua sendo a representação normalizada; e cada detector preserva sua própria semântica e configuração.
 
-Linhas não suportadas são contabilizadas. Erros de parsing em mensagens suportadas são registrados com número da linha e mensagem, sem copiar a linha bruta nem interromper a análise. Exceções do filesystem e de decoding não são escondidas. O resultado imutável reúne contagens, erros e findings para uma futura camada de apresentação. Ingestão Windows e uma arquitetura genérica de aplicação continuam fora do contrato atual.
+Linhas não suportadas são contabilizadas. Erros de parsing em mensagens suportadas são registrados com número da linha e mensagem, sem copiar a linha bruta nem interromper a análise. Exceções do filesystem e de decoding não são escondidas. O resultado imutável reúne contagens, erros e findings para a camada de apresentação. Uma arquitetura genérica de aplicação continua fora do contrato atual.
+
+## Análise de arquivo Windows JSON
+
+```text
+arquivo JSON Windows
+          |
+          v
+WindowsJsonFileAnalyzer
+          |
+          v
+validação do documento e conversão dos registros
+          |
+          v
+WindowsAuthenticationParser
+          |
+          v
+AuthenticationEvent[]
+          |
+          +--> BruteForceDetector
+          +--> OffHoursLoginDetector
+          +--> PasswordSprayDetector
+          |
+          v
+WindowsJsonAnalysisResult
+```
+
+Os caminhos de aplicação Linux e Windows convergem no mesmo modelo e nos mesmos detectores. O caminho Linux traduz linhas OpenSSH, enquanto o caminho Windows carrega um array JSON em UTF-8 e converte timestamps ISO 8601 com offset antes de chamar o parser Windows.
+
+O `WindowsJsonFileAnalyzer` é responsável por leitura, validação da raiz, conversão, contabilidade e orquestração. O `WindowsAuthenticationParser` continua responsável pela semântica dos Event IDs 4624 e 4625. IDs não suportados são contabilizados, e erros individuais preservam o número do registro sem copiar seu conteúdo bruto. Falhas de sintaxe JSON invalidam o documento inteiro; falhas de um registro permitem continuar.
+
+JSON é um formato de intercâmbio para eventos previamente extraídos, não um mecanismo de coleta nativa. Acesso ao Windows Event Log, XML, EVTX e CLI Windows permanecem fora do contrato atual.
 
 ## Interface de linha de comando
 
@@ -167,4 +198,4 @@ LinuxLogAnalysisResult --------------------------> formatação CLI
 
 A CLI é uma camada fina de apresentação e composição. Ela valida a sintaxe dos argumentos, instancia o parser e os detectores com a configuração fornecida, chama o `LinuxLogFileAnalyzer` e formata o resultado estruturado. Não contém regras de parsing nem cálculos de detecção.
 
-O parser continua responsável pela sintaxe da fonte, `AuthenticationEvent` pela normalização, os detectores pelas regras de segurança e a camada de análise pela orquestração. Essa separação permite adicionar futuras apresentações sem duplicar lógica. O comando atual cobre somente arquivos Linux; ingestão e CLI Windows permanecem trabalho futuro.
+O parser continua responsável pela sintaxe da fonte, `AuthenticationEvent` pela normalização, os detectores pelas regras de segurança e a camada de análise pela orquestração. Essa separação permite adicionar futuras apresentações sem duplicar lógica. O comando atual cobre somente arquivos Linux; o pipeline Windows JSON ainda não possui apresentação em CLI.

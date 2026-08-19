@@ -10,7 +10,7 @@ O problema abordado é a dificuldade de analisar, de forma consistente, registro
 
 ## Estado atual
 
-O Milestone 8 adiciona uma interface de linha de comando para a análise de arquivos Linux. O projeto lê um log Linux em UTF-8, normaliza o subconjunto OpenSSH suportado, executa os três detectores e apresenta contagens, erros de parsing e findings. Ingestão e CLI para eventos Windows ainda não foram implementadas.
+O Milestone 9 adiciona análise programática de eventos Windows extraídos para um arquivo JSON. Linux possui fluxo completo com CLI; Windows agora possui ingestão JSON, normalização e execução dos três detectores, mas ainda não possui CLI nem coleta nativa do Event Log.
 
 ## Suporte atual
 
@@ -27,7 +27,7 @@ O parser Windows reconhece dados estruturados previamente extraídos para:
 - Event ID 4624, como autenticação bem-sucedida;
 - Event ID 4625, como autenticação malsucedida.
 
-O contrato de entrada usa um mapeamento com `event_id`, `timestamp`, `username` e `source_ip` opcional. O timestamp deve ser um `datetime` com fuso horário. Acesso nativo ao Windows Event Log, ingestão de XML e suporte aos demais eventos do Windows Security ainda não foram implementados.
+O parser recebe um mapeamento com `event_id`, `timestamp`, `username` e `source_ip` opcional. O timestamp entregue ao parser deve ser um `datetime` com fuso horário. O pipeline JSON converte strings ISO 8601 com offset explícito para esse contrato. Acesso nativo ao Windows Event Log, ingestão de XML e suporte aos demais eventos do Windows Security ainda não foram implementados.
 
 ## Detecção de força bruta
 
@@ -63,7 +63,26 @@ arquivo Linux -> parser SSH -> AuthenticationEvent -> detectores -> resultado es
 
 O arquivo é lido incrementalmente em UTF-8. Linhas não suportadas são contabilizadas e ignoradas. Mensagens suportadas malformadas geram erros estruturados com número da linha e mensagem, sem interromper o restante do arquivo. Falhas do filesystem e conteúdo inválido em UTF-8 continuam visíveis ao chamador.
 
-A análise ainda reconhece somente o subconjunto OpenSSH documentado. Não existe coleta Windows, leitura de EVTX ou pipeline genérico de ingestão.
+A análise Linux ainda reconhece somente o subconjunto OpenSSH documentado. Não existe coleta nativa Windows, leitura de EVTX ou pipeline genérico de ingestão.
+
+## Análise de arquivo Windows JSON
+
+O `WindowsJsonFileAnalyzer` recebe um `Path`, um `WindowsAuthenticationParser` e instâncias já configuradas dos três detectores. O formato de intercâmbio é um array JSON em UTF-8:
+
+```json
+[
+  {
+    "event_id": 4625,
+    "timestamp": "2026-08-18T10:15:00-03:00",
+    "username": "Administrator",
+    "source_ip": "192.0.2.50"
+  }
+]
+```
+
+Cada timestamp deve ser uma string ISO 8601 com timezone explícito. Event IDs inteiros diferentes de 4624 e 4625 são contabilizados como não suportados e não entram na análise de autenticação. Registros inválidos são reportados por posição e mensagem, sem incluir o objeto JSON bruto, e não impedem o processamento dos registros seguintes.
+
+JSON sintaticamente inválido e uma raiz diferente de array impedem a análise do documento. Falhas de filesystem e decoding também permanecem distintas dos erros individuais de registro. O JSON é somente um formato de intercâmbio para dados previamente extraídos; coleta nativa, XML e EVTX continuam sem suporte. Ainda não existe comando Windows na CLI.
 
 ## Tecnologias
 
@@ -122,7 +141,7 @@ Esses valores podem ser alterados com `--brute-force-threshold`, `--brute-force-
 
 A saída apresenta contagens gerais, erros de parsing sem reproduzir a linha bruta e seções detalhadas para cada tipo de finding. O código de saída é `0` quando a análise termina, mesmo que existam findings. Argumentos ou configurações inválidas e falhas operacionais, como arquivo inexistente, retornam código diferente de zero com mensagem em stderr.
 
-Após a instalação editável, o mesmo comando também fica disponível como `login-log-analyzer`. A CLI atual analisa somente arquivos Linux com o subconjunto OpenSSH suportado. A normalização Windows existe, mas ainda não há coleta, ingestão ou comando Windows. Também não existem GUI, exportação de relatórios ou integração com SIEM.
+Após a instalação editável, o mesmo comando também fica disponível como `login-log-analyzer`. A CLI atual analisa somente arquivos Linux com o subconjunto OpenSSH suportado. A análise Windows JSON está disponível apenas pela API Python; ainda não há coleta nativa nem comando Windows. Também não existem GUI, exportação de relatórios ou integração com SIEM.
 
 ## Estrutura inicial
 

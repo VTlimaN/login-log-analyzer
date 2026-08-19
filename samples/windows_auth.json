@@ -1,0 +1,26 @@
+[
+  {
+    "event_id": 4624,
+    "timestamp": "2026-08-18T09:12:10-03:00",
+    "username": "TrainingAnalyst",
+    "source_ip": "192.0.2.25"
+  },
+  {
+    "event_id": 4625,
+    "timestamp": "2026-08-18T03:21:44-03:00",
+    "username": "Administrator",
+    "source_ip": "198.51.100.50"
+  },
+  {
+    "event_id": 4625,
+    "timestamp": "2026-08-18T03:22:01-03:00",
+    "username": "Visitor",
+    "source_ip": "2001:db8::50"
+  },
+  {
+    "event_id": 4634,
+    "timestamp": "2026-08-18T09:30:00-03:00",
+    "username": "TrainingAnalyst",
+    "source_ip": null
+  }
+]
