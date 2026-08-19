@@ -27,6 +27,7 @@ def create_result(*, findings: bool = False) -> WindowsNativeAnalysisResult:
             brute_force_findings=(),
             off_hours_findings=(),
             password_spray_findings=(),
+            successful_login_after_failures_findings=(),
         )
 
     return WindowsNativeAnalysisResult(
@@ -62,6 +63,7 @@ def create_result(*, findings: bool = False) -> WindowsNativeAnalysisResult:
                 usernames=("Admin", "User1", "User2", "User3", "User4"),
             ),
         ),
+        successful_login_after_failures_findings=(),
     )
 
 

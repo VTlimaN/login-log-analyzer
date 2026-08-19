@@ -13,6 +13,9 @@ from login_log_analyzer.linux_file_analysis import (
 )
 from login_log_analyzer.off_hours import OffHoursLoginDetector
 from login_log_analyzer.password_spray import PasswordSprayDetector
+from login_log_analyzer.success_after_failures import (
+    SuccessfulLoginAfterFailuresDetector,
+)
 
 
 def create_analyzer(
@@ -35,6 +38,12 @@ def create_analyzer(
             username_threshold=password_spray_threshold,
             window=timedelta(minutes=5),
         ),
+        successful_login_after_failures_detector=(
+            SuccessfulLoginAfterFailuresDetector(
+                failure_threshold=3,
+                window=timedelta(minutes=5),
+            )
+        ),
     )
 
 
@@ -55,6 +64,7 @@ def test_analyzes_empty_file(tmp_path: Path) -> None:
     assert result.brute_force_findings == ()
     assert result.off_hours_findings == ()
     assert result.password_spray_findings == ()
+    assert result.successful_login_after_failures_findings == ()
 
 
 def test_analyzes_file_with_only_unsupported_lines(tmp_path: Path) -> None:
@@ -76,6 +86,7 @@ def test_analyzes_file_with_only_unsupported_lines(tmp_path: Path) -> None:
     assert result.brute_force_findings == ()
     assert result.off_hours_findings == ()
     assert result.password_spray_findings == ()
+    assert result.successful_login_after_failures_findings == ()
 
 
 def test_mixed_file_counts_lines_and_continues_after_parse_error(
@@ -200,12 +211,42 @@ def test_parser_year_and_timezone_remain_explicit(tmp_path: Path) -> None:
             username_threshold=3,
             window=timedelta(minutes=5),
         ),
+        successful_login_after_failures_detector=(
+            SuccessfulLoginAfterFailuresDetector(
+                failure_threshold=3,
+                window=timedelta(minutes=5),
+            )
+        ),
     )
 
     result = analyzer.analyze(log_path)
 
     assert result.off_hours_findings[0].timestamp.year == 2040
     assert result.off_hours_findings[0].timestamp.utcoffset() == timedelta(hours=-3)
+
+
+def test_pipeline_detects_successful_login_after_failures(tmp_path: Path) -> None:
+    log_path = tmp_path / "success-after-failures.log"
+    write_log(
+        log_path,
+        [
+            "Aug 18 09:00:00 host sshd[10]: "
+            "Failed password for admin from 192.0.2.50 port 50000 ssh2",
+            "Aug 18 09:01:00 host sshd[10]: "
+            "Failed password for admin from 192.0.2.50 port 50001 ssh2",
+            "Aug 18 09:02:00 host sshd[10]: "
+            "Failed password for admin from 192.0.2.50 port 50002 ssh2",
+            "Aug 18 09:03:00 host sshd[10]: "
+            "Accepted password for admin from 192.0.2.50 port 50003 ssh2",
+        ],
+    )
+
+    result = create_analyzer().analyze(log_path)
+
+    assert len(result.successful_login_after_failures_findings) == 1
+    finding = result.successful_login_after_failures_findings[0]
+    assert finding.username == "admin"
+    assert finding.failure_count == 3
 
 
 def test_reads_crlf_and_final_line_without_newline(tmp_path: Path) -> None:
@@ -260,5 +301,6 @@ def test_result_and_nested_collections_are_immutable(tmp_path: Path) -> None:
     assert isinstance(result.brute_force_findings, tuple)
     assert isinstance(result.off_hours_findings, tuple)
     assert isinstance(result.password_spray_findings, tuple)
+    assert isinstance(result.successful_login_after_failures_findings, tuple)
     with pytest.raises(FrozenInstanceError):
         result.total_lines = 2

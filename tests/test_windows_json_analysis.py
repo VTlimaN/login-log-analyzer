@@ -8,6 +8,9 @@ import pytest
 from login_log_analyzer.brute_force import BruteForceDetector
 from login_log_analyzer.off_hours import OffHoursLoginDetector
 from login_log_analyzer.password_spray import PasswordSprayDetector
+from login_log_analyzer.success_after_failures import (
+    SuccessfulLoginAfterFailuresDetector,
+)
 from login_log_analyzer.windows_authentication import WindowsAuthenticationParser
 from login_log_analyzer.windows_json_analysis import (
     WindowsJsonAnalysisResult,
@@ -36,6 +39,12 @@ def create_analyzer(
         password_spray_detector=PasswordSprayDetector(
             username_threshold=password_spray_threshold,
             window=timedelta(minutes=5),
+        ),
+        successful_login_after_failures_detector=(
+            SuccessfulLoginAfterFailuresDetector(
+                failure_threshold=3,
+                window=timedelta(minutes=5),
+            )
         ),
     )
 
@@ -68,6 +77,7 @@ def test_analyzes_valid_empty_array(tmp_path: Path) -> None:
     assert result.brute_force_findings == ()
     assert result.off_hours_findings == ()
     assert result.password_spray_findings == ()
+    assert result.successful_login_after_failures_findings == ()
 
 
 def test_empty_file_is_invalid_json(tmp_path: Path) -> None:
@@ -316,6 +326,33 @@ def test_analyzer_uses_supplied_detector_configuration(tmp_path: Path) -> None:
     assert result.password_spray_findings == ()
 
 
+def test_pipeline_detects_successful_login_after_failures(tmp_path: Path) -> None:
+    path = tmp_path / "success-after-failures.json"
+    records = [
+        create_record(
+            event_id=4625,
+            timestamp=f"2026-08-18T09:0{minute}:00+00:00",
+            username="Admin",
+            source_ip="192.0.2.50",
+        )
+        for minute in range(3)
+    ]
+    records.append(
+        create_record(
+            event_id=4624,
+            timestamp="2026-08-18T09:03:00+00:00",
+            username="Admin",
+            source_ip="192.0.2.50",
+        )
+    )
+    write_document(path, records)
+
+    result = create_analyzer().analyze(path)
+
+    assert len(result.successful_login_after_failures_findings) == 1
+    assert result.successful_login_after_failures_findings[0].failure_count == 3
+
+
 def test_missing_file_error_propagates(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         create_analyzer().analyze(tmp_path / "missing.json")
@@ -343,6 +380,7 @@ def test_result_and_record_errors_are_immutable(tmp_path: Path) -> None:
     assert isinstance(result, WindowsJsonAnalysisResult)
     assert isinstance(result.record_errors, tuple)
     assert isinstance(result.record_errors[0], WindowsJsonRecordError)
+    assert isinstance(result.successful_login_after_failures_findings, tuple)
     with pytest.raises(FrozenInstanceError):
         result.total_records = 2
     with pytest.raises(FrozenInstanceError):

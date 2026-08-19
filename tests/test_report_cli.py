@@ -18,6 +18,7 @@ class NativeAnalyzer:
             brute_force_findings=(),
             off_hours_findings=(),
             password_spray_findings=(),
+            successful_login_after_failures_findings=(),
         )
 
 

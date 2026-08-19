@@ -25,6 +25,10 @@ from login_log_analyzer.reporting import (
     export_json_report,
     validate_report_destinations,
 )
+from login_log_analyzer.success_after_failures import (
+    SuccessfulLoginAfterFailuresDetector,
+    SuccessfulLoginAfterFailuresFinding,
+)
 from login_log_analyzer.windows_authentication import WindowsAuthenticationParser
 from login_log_analyzer.windows_json_analysis import (
     WindowsJsonAnalysisResult,
@@ -44,6 +48,8 @@ DEFAULT_BRUTE_FORCE_THRESHOLD = 5
 DEFAULT_BRUTE_FORCE_WINDOW_MINUTES = 5
 DEFAULT_PASSWORD_SPRAY_THRESHOLD = 5
 DEFAULT_PASSWORD_SPRAY_WINDOW_MINUTES = 10
+DEFAULT_SUCCESS_AFTER_FAILURES_THRESHOLD = 5
+DEFAULT_SUCCESS_AFTER_FAILURES_WINDOW_MINUTES = 5
 DEFAULT_ALLOWED_WEEKDAYS = "mon,tue,wed,thu,fri"
 DEFAULT_ALLOWED_START = "08:00"
 DEFAULT_ALLOWED_END = "18:00"
@@ -147,6 +153,18 @@ def add_detector_arguments(command_parser: argparse.ArgumentParser) -> None:
         type=int,
         default=DEFAULT_PASSWORD_SPRAY_WINDOW_MINUTES,
         help="janela de password spraying em minutos",
+    )
+    command_parser.add_argument(
+        "--success-after-failures-threshold",
+        type=int,
+        default=DEFAULT_SUCCESS_AFTER_FAILURES_THRESHOLD,
+        help="quantidade de falhas antes de um login bem-sucedido",
+    )
+    command_parser.add_argument(
+        "--success-after-failures-window-minutes",
+        type=int,
+        default=DEFAULT_SUCCESS_AFTER_FAILURES_WINDOW_MINUTES,
+        help="janela entre as falhas e o login bem-sucedido em minutos",
     )
     command_parser.add_argument(
         "--allowed-weekdays",
@@ -266,7 +284,12 @@ def create_argument_parser() -> argparse.ArgumentParser:
 
 def create_detectors(
     arguments: argparse.Namespace,
-) -> tuple[BruteForceDetector, OffHoursLoginDetector, PasswordSprayDetector]:
+) -> tuple[
+    BruteForceDetector,
+    OffHoursLoginDetector,
+    PasswordSprayDetector,
+    SuccessfulLoginAfterFailuresDetector,
+]:
     return (
         BruteForceDetector(
             failure_threshold=arguments.brute_force_threshold,
@@ -281,13 +304,22 @@ def create_detectors(
             username_threshold=arguments.password_spray_threshold,
             window=timedelta(minutes=arguments.password_spray_window_minutes),
         ),
+        SuccessfulLoginAfterFailuresDetector(
+            failure_threshold=arguments.success_after_failures_threshold,
+            window=timedelta(
+                minutes=arguments.success_after_failures_window_minutes
+            ),
+        ),
     )
 
 
 def create_linux_analyzer(arguments: argparse.Namespace) -> LinuxLogFileAnalyzer:
-    brute_force_detector, off_hours_detector, password_spray_detector = (
-        create_detectors(arguments)
-    )
+    (
+        brute_force_detector,
+        off_hours_detector,
+        password_spray_detector,
+        successful_login_after_failures_detector,
+    ) = create_detectors(arguments)
     return LinuxLogFileAnalyzer(
         parser=LinuxAuthenticationParser(
             year=arguments.year,
@@ -296,33 +328,48 @@ def create_linux_analyzer(arguments: argparse.Namespace) -> LinuxLogFileAnalyzer
         brute_force_detector=brute_force_detector,
         off_hours_detector=off_hours_detector,
         password_spray_detector=password_spray_detector,
+        successful_login_after_failures_detector=(
+            successful_login_after_failures_detector
+        ),
     )
 
 
 def create_windows_analyzer(arguments: argparse.Namespace) -> WindowsJsonFileAnalyzer:
-    brute_force_detector, off_hours_detector, password_spray_detector = (
-        create_detectors(arguments)
-    )
+    (
+        brute_force_detector,
+        off_hours_detector,
+        password_spray_detector,
+        successful_login_after_failures_detector,
+    ) = create_detectors(arguments)
     return WindowsJsonFileAnalyzer(
         windows_parser=WindowsAuthenticationParser(),
         brute_force_detector=brute_force_detector,
         off_hours_detector=off_hours_detector,
         password_spray_detector=password_spray_detector,
+        successful_login_after_failures_detector=(
+            successful_login_after_failures_detector
+        ),
     )
 
 
 def create_windows_native_analyzer(
     arguments: argparse.Namespace,
 ) -> WindowsNativeEventAnalyzer:
-    brute_force_detector, off_hours_detector, password_spray_detector = (
-        create_detectors(arguments)
-    )
+    (
+        brute_force_detector,
+        off_hours_detector,
+        password_spray_detector,
+        successful_login_after_failures_detector,
+    ) = create_detectors(arguments)
     return WindowsNativeEventAnalyzer(
         collector=WindowsEventLogCollector(),
         windows_parser=WindowsAuthenticationParser(),
         brute_force_detector=brute_force_detector,
         off_hours_detector=off_hours_detector,
         password_spray_detector=password_spray_detector,
+        successful_login_after_failures_detector=(
+            successful_login_after_failures_detector
+        ),
     )
 
 
@@ -379,6 +426,26 @@ def render_password_spray_findings(
         )
 
 
+def render_successful_login_after_failures_findings(
+    findings: tuple[SuccessfulLoginAfterFailuresFinding, ...],
+    output: TextIO,
+) -> None:
+    if not findings:
+        return
+
+    print("\nLogin bem-sucedido após falhas repetidas", file=output)
+    for finding in findings:
+        print(
+            f"  {finding.username} | {finding.source_ip} | "
+            f"primeira falha: {finding.first_failure.isoformat()} | "
+            f"última falha: {finding.last_failure.isoformat()} | "
+            f"sucesso: {finding.successful_login.isoformat()} | "
+            f"falhas: {finding.failure_count} | "
+            f"plataforma: {finding.platform.value}",
+            file=output,
+        )
+
+
 def render_linux_result(
     path: Path,
     result: LinuxLogAnalysisResult,
@@ -396,6 +463,11 @@ def render_linux_result(
         f"  Achados de password spraying: {len(result.password_spray_findings)}",
         file=output,
     )
+    print(
+        "  Achados de sucesso após falhas: "
+        f"{len(result.successful_login_after_failures_findings)}",
+        file=output,
+    )
 
     if result.parse_errors:
         print("\nErros de parsing", file=output)
@@ -405,6 +477,10 @@ def render_linux_result(
     render_brute_force_findings(result.brute_force_findings, output)
     render_off_hours_findings(result.off_hours_findings, output)
     render_password_spray_findings(result.password_spray_findings, output)
+    render_successful_login_after_failures_findings(
+        result.successful_login_after_failures_findings,
+        output,
+    )
 
 
 def render_windows_result(
@@ -427,6 +503,11 @@ def render_windows_result(
         f"  Achados de password spraying: {len(result.password_spray_findings)}",
         file=output,
     )
+    print(
+        "  Achados de sucesso após falhas: "
+        f"{len(result.successful_login_after_failures_findings)}",
+        file=output,
+    )
 
     if result.record_errors:
         print("\nErros de registro", file=output)
@@ -436,6 +517,10 @@ def render_windows_result(
     render_brute_force_findings(result.brute_force_findings, output)
     render_off_hours_findings(result.off_hours_findings, output)
     render_password_spray_findings(result.password_spray_findings, output)
+    render_successful_login_after_failures_findings(
+        result.successful_login_after_failures_findings,
+        output,
+    )
 
 
 def render_windows_native_result(
@@ -456,6 +541,11 @@ def render_windows_native_result(
         f"  Achados de password spraying: {len(result.password_spray_findings)}",
         file=output,
     )
+    print(
+        "  Achados de sucesso após falhas: "
+        f"{len(result.successful_login_after_failures_findings)}",
+        file=output,
+    )
 
     if result.record_errors:
         print("\nErros de registro", file=output)
@@ -465,6 +555,10 @@ def render_windows_native_result(
     render_brute_force_findings(result.brute_force_findings, output)
     render_off_hours_findings(result.off_hours_findings, output)
     render_password_spray_findings(result.password_spray_findings, output)
+    render_successful_login_after_failures_findings(
+        result.successful_login_after_failures_findings,
+        output,
+    )
 
 
 def export_requested_reports(

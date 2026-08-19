@@ -21,6 +21,9 @@ from login_log_analyzer.reporting import (
     export_json_report,
     validate_report_destinations,
 )
+from login_log_analyzer.success_after_failures import (
+    SuccessfulLoginAfterFailuresFinding,
+)
 from login_log_analyzer.windows_json_analysis import (
     WindowsJsonAnalysisResult,
     WindowsJsonRecordError,
@@ -39,6 +42,7 @@ def findings() -> tuple[
     tuple[BruteForceFinding, ...],
     tuple[OffHoursLoginFinding, ...],
     tuple[PasswordSprayFinding, ...],
+    tuple[SuccessfulLoginAfterFailuresFinding, ...],
 ]:
     return (
         (
@@ -67,11 +71,26 @@ def findings() -> tuple[
                 usernames=("Admin", "Guest", "User"),
             ),
         ),
+        (
+            SuccessfulLoginAfterFailuresFinding(
+                username="Admin",
+                source_ip=ip_address("192.0.2.10"),
+                first_failure=FIRST,
+                last_failure=LAST,
+                successful_login=datetime.fromisoformat(
+                    "2026-08-18T09:05:00-03:00"
+                ),
+                failure_count=5,
+                platform=AuthenticationPlatform.WINDOWS,
+            ),
+        ),
     )
 
 
 def linux_result(*, include_findings: bool = True) -> LinuxLogAnalysisResult:
-    brute_force, off_hours, password_spray = findings() if include_findings else ((), (), ())
+    brute_force, off_hours, password_spray, success_after_failures = (
+        findings() if include_findings else ((), (), (), ())
+    )
     return LinuxLogAnalysisResult(
         total_lines=8,
         parsed_event_count=6,
@@ -80,6 +99,7 @@ def linux_result(*, include_findings: bool = True) -> LinuxLogAnalysisResult:
         brute_force_findings=brute_force,
         off_hours_findings=off_hours,
         password_spray_findings=password_spray,
+        successful_login_after_failures_findings=success_after_failures,
     )
 
 
@@ -96,6 +116,7 @@ def linux_result(*, include_findings: bool = True) -> LinuxLogAnalysisResult:
                 brute_force_findings=findings()[0],
                 off_hours_findings=findings()[1],
                 password_spray_findings=findings()[2],
+                successful_login_after_failures_findings=findings()[3],
             ),
             "windows_json",
             "total_records",
@@ -110,6 +131,7 @@ def linux_result(*, include_findings: bool = True) -> LinuxLogAnalysisResult:
                 brute_force_findings=findings()[0],
                 off_hours_findings=findings()[1],
                 password_spray_findings=findings()[2],
+                successful_login_after_failures_findings=findings()[3],
             ),
             "windows_native",
             "collected_record_count",
@@ -144,6 +166,20 @@ def test_exports_complete_json_contract(
         "Guest",
         "User",
     ]
+    success_finding = document["findings"]["successful_login_after_failures"][0]
+    assert success_finding == {
+        "username": "Admin",
+        "source_ip": "192.0.2.10",
+        "first_failure": "2026-08-18T09:00:00-03:00",
+        "last_failure": "2026-08-18T09:04:00-03:00",
+        "successful_login": "2026-08-18T09:05:00-03:00",
+        "failure_count": 5,
+        "platform": "windows",
+    }
+    assert (
+        document["summary"]["successful_login_after_failures_finding_count"]
+        == 1
+    )
     assert "Produção" in destination.read_text(encoding="utf-8")
     assert destination.read_bytes().endswith(b"\n")
 
@@ -160,6 +196,7 @@ def test_exports_unified_csv_with_quoting_and_stable_values(tmp_path: Path) -> N
         "brute_force",
         "off_hours",
         "password_spray",
+        "successful_login_after_failures",
     ]
     assert rows[0]["username"] == "Admin, Produção"
     assert rows[0]["first_observed"].endswith("-03:00")
@@ -167,6 +204,12 @@ def test_exports_unified_csv_with_quoting_and_stable_values(tmp_path: Path) -> N
     assert rows[1]["platform"] == "windows"
     assert rows[2]["source_ip"] == "2001:db8::25"
     assert rows[2]["usernames"] == "Admin;Guest;User"
+    assert rows[3]["username"] == "Admin"
+    assert rows[3]["platform"] == "windows"
+    assert rows[3]["first_failure"] == "2026-08-18T09:00:00-03:00"
+    assert rows[3]["last_failure"] == "2026-08-18T09:04:00-03:00"
+    assert rows[3]["successful_login"] == "2026-08-18T09:05:00-03:00"
+    assert rows[3]["failure_count"] == "5"
 
 
 def test_exports_header_only_csv_when_there_are_no_findings(tmp_path: Path) -> None:
