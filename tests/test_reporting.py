@@ -12,6 +12,7 @@ from login_log_analyzer.linux_file_analysis import (
     LinuxLogAnalysisResult,
     LinuxLogParseError,
 )
+from login_log_analyzer.multiple_source_ips import MultipleSourceIPsFinding
 from login_log_analyzer.off_hours import OffHoursLoginFinding
 from login_log_analyzer.password_spray import PasswordSprayFinding
 from login_log_analyzer.reporting import (
@@ -43,6 +44,7 @@ def findings() -> tuple[
     tuple[OffHoursLoginFinding, ...],
     tuple[PasswordSprayFinding, ...],
     tuple[SuccessfulLoginAfterFailuresFinding, ...],
+    tuple[MultipleSourceIPsFinding, ...],
 ]:
     return (
         (
@@ -84,12 +86,25 @@ def findings() -> tuple[
                 platform=AuthenticationPlatform.WINDOWS,
             ),
         ),
+        (
+            MultipleSourceIPsFinding(
+                username="Admin, Produção",
+                first_observed=FIRST,
+                last_observed=LAST,
+                distinct_source_ip_count=3,
+                source_ips=(
+                    ip_address("192.0.2.10"),
+                    ip_address("192.0.2.20"),
+                    ip_address("2001:db8::10"),
+                ),
+            ),
+        ),
     )
 
 
 def linux_result(*, include_findings: bool = True) -> LinuxLogAnalysisResult:
-    brute_force, off_hours, password_spray, success_after_failures = (
-        findings() if include_findings else ((), (), (), ())
+    brute_force, off_hours, password_spray, success_after_failures, multiple_ips = (
+        findings() if include_findings else ((), (), (), (), ())
     )
     return LinuxLogAnalysisResult(
         total_lines=8,
@@ -100,6 +115,7 @@ def linux_result(*, include_findings: bool = True) -> LinuxLogAnalysisResult:
         off_hours_findings=off_hours,
         password_spray_findings=password_spray,
         successful_login_after_failures_findings=success_after_failures,
+        multiple_source_ips_findings=multiple_ips,
     )
 
 
@@ -117,6 +133,7 @@ def linux_result(*, include_findings: bool = True) -> LinuxLogAnalysisResult:
                 off_hours_findings=findings()[1],
                 password_spray_findings=findings()[2],
                 successful_login_after_failures_findings=findings()[3],
+                multiple_source_ips_findings=findings()[4],
             ),
             "windows_json",
             "total_records",
@@ -132,6 +149,7 @@ def linux_result(*, include_findings: bool = True) -> LinuxLogAnalysisResult:
                 off_hours_findings=findings()[1],
                 password_spray_findings=findings()[2],
                 successful_login_after_failures_findings=findings()[3],
+                multiple_source_ips_findings=findings()[4],
             ),
             "windows_native",
             "collected_record_count",
@@ -180,6 +198,15 @@ def test_exports_complete_json_contract(
         document["summary"]["successful_login_after_failures_finding_count"]
         == 1
     )
+    multiple_ips_finding = document["findings"]["multiple_source_ips"][0]
+    assert multiple_ips_finding == {
+        "username": "Admin, Produção",
+        "first_observed": "2026-08-18T09:00:00-03:00",
+        "last_observed": "2026-08-18T09:04:00-03:00",
+        "distinct_source_ip_count": 3,
+        "source_ips": ["192.0.2.10", "192.0.2.20", "2001:db8::10"],
+    }
+    assert document["summary"]["multiple_source_ips_finding_count"] == 1
     assert "Produção" in destination.read_text(encoding="utf-8")
     assert destination.read_bytes().endswith(b"\n")
 
@@ -197,6 +224,7 @@ def test_exports_unified_csv_with_quoting_and_stable_values(tmp_path: Path) -> N
         "off_hours",
         "password_spray",
         "successful_login_after_failures",
+        "multiple_source_ips",
     ]
     assert rows[0]["username"] == "Admin, Produção"
     assert rows[0]["first_observed"].endswith("-03:00")
@@ -210,6 +238,9 @@ def test_exports_unified_csv_with_quoting_and_stable_values(tmp_path: Path) -> N
     assert rows[3]["last_failure"] == "2026-08-18T09:04:00-03:00"
     assert rows[3]["successful_login"] == "2026-08-18T09:05:00-03:00"
     assert rows[3]["failure_count"] == "5"
+    assert rows[4]["username"] == "Admin, Produção"
+    assert rows[4]["distinct_source_ip_count"] == "3"
+    assert rows[4]["source_ips"] == "192.0.2.10;192.0.2.20;2001:db8::10"
 
 
 def test_exports_header_only_csv_when_there_are_no_findings(tmp_path: Path) -> None:

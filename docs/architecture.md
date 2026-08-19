@@ -12,6 +12,7 @@ CLI analyze-windows-native -> WindowsNativeEventAnalyzer -> WindowsAuthenticatio
                                                                                                          +-> OffHoursLoginDetector
                                                                                                          +-> PasswordSprayDetector
                                                                                                          +-> SuccessfulLoginAfterFailuresDetector
+                                                                                                         +-> MultipleSourceIPsDetector
                                                                                                                  |
                                                                                                                  v
                                                                                                       resultado estruturado
@@ -94,6 +95,12 @@ Todos os detectores recebem a mesma coleção de `AuthenticationEvent` e não co
 
 O detector é stateless entre chamadas e heurístico. O finding indica que tentativas repetidas foram seguidas por autenticação bem-sucedida, sem afirmar comprometimento da conta.
 
+### Múltiplos IPs de origem contra uma conta
+
+`MultipleSourceIPsDetector` correlaciona falhas pelo username exato e conta IPs de origem distintos em uma janela inclusiva de instantes absolutos. Eventos sem IP e sucessos não participam; sucessos também não reiniciam o episódio. Plataforma não compõe a chave, permitindo correlação entre eventos Linux e Windows normalizados.
+
+Um finding é emitido quando o threshold de IPs distintos é atingido e novos findings ficam suprimidos enquanto as falhas consecutivas do username permanecem separadas por no máximo a janela. Uma lacuna maior inicia novo episódio. A tupla de IPs é imutável e ordenada deterministicamente por versão e valor numérico. A regra é heurística e não afirma intenção maliciosa.
+
 ## Resultados e erros
 
 Os resultados Linux e Windows são dataclasses imutáveis com contagens, erros recuperáveis e findings separados por detector. Eles permanecem específicos para que linhas Linux e registros Windows sejam descritos com precisão.
@@ -104,7 +111,7 @@ Falhas de filesystem e decoding não são confundidas com registros malformados.
 
 A camada `reporting` recebe um resultado de análise concluído e permanece a jusante de ingestão, normalização e detecção. Ela não altera eventos nem findings.
 
-O JSON representa o resultado completo com `report_version` 1, origem, resumo, erros recuperáveis e categorias de findings. As origens estáveis são `linux_file`, `windows_json` e `windows_native`. O CSV representa somente findings em colunas unificadas, usando os tipos `brute_force`, `off_hours`, `password_spray` e `successful_login_after_failures`; campos não aplicáveis permanecem vazios. O quarto tipo acrescenta `first_failure`, `last_failure` e `successful_login` ao conjunto unificado de colunas.
+O JSON representa o resultado completo com `report_version` 1, origem, resumo, erros recuperáveis e categorias de findings. As origens estáveis são `linux_file`, `windows_json` e `windows_native`. O CSV representa somente findings em colunas unificadas, usando os tipos `brute_force`, `off_hours`, `password_spray`, `successful_login_after_failures` e `multiple_source_ips`; campos não aplicáveis permanecem vazios. O finding de sucesso após falhas usa `first_failure`, `last_failure` e `successful_login`. O finding de múltiplas origens usa `distinct_source_ip_count` e `source_ips`, com IPs separados por `;` no CSV.
 
 `report_version` permanece em 1 porque categorias de finding e colunas adicionais são extensões aditivas do contrato, que já separa findings por tipo. Nenhuma chave existente foi removida ou teve semântica alterada.
 

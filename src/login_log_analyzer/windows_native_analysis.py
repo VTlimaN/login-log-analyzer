@@ -7,6 +7,10 @@ from datetime import datetime
 
 from login_log_analyzer.authentication import AuthenticationEvent
 from login_log_analyzer.brute_force import BruteForceDetector, BruteForceFinding
+from login_log_analyzer.multiple_source_ips import (
+    MultipleSourceIPsDetector,
+    MultipleSourceIPsFinding,
+)
 from login_log_analyzer.off_hours import OffHoursLoginDetector, OffHoursLoginFinding
 from login_log_analyzer.password_spray import (
     PasswordSprayDetector,
@@ -71,6 +75,7 @@ class WindowsNativeAnalysisResult:
         SuccessfulLoginAfterFailuresFinding,
         ...,
     ]
+    multiple_source_ips_findings: tuple[MultipleSourceIPsFinding, ...]
 
     @property
     def record_error_count(self) -> int:
@@ -181,6 +186,7 @@ class WindowsNativeEventAnalyzer:
         off_hours_detector: OffHoursLoginDetector,
         password_spray_detector: PasswordSprayDetector,
         successful_login_after_failures_detector: SuccessfulLoginAfterFailuresDetector,
+        multiple_source_ips_detector: MultipleSourceIPsDetector,
     ) -> None:
         self._collector = collector
         self._windows_parser = windows_parser
@@ -190,6 +196,7 @@ class WindowsNativeEventAnalyzer:
         self._successful_login_after_failures_detector = (
             successful_login_after_failures_detector
         )
+        self._multiple_source_ips_detector = multiple_source_ips_detector
 
     def analyze(
         self,
@@ -240,6 +247,9 @@ class WindowsNativeEventAnalyzer:
                 self._successful_login_after_failures_detector.detect(
                     normalized_events
                 )
+            ),
+            multiple_source_ips_findings=tuple(
+                self._multiple_source_ips_detector.detect(normalized_events)
             ),
         )
 

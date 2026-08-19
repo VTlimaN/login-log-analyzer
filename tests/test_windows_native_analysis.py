@@ -11,6 +11,7 @@ from login_log_analyzer.authentication import (
     AuthenticationPlatform,
 )
 from login_log_analyzer.brute_force import BruteForceDetector
+from login_log_analyzer.multiple_source_ips import MultipleSourceIPsDetector
 from login_log_analyzer.off_hours import OffHoursLoginDetector
 from login_log_analyzer.password_spray import PasswordSprayDetector
 from login_log_analyzer.success_after_failures import (
@@ -100,6 +101,7 @@ def create_recording_analyzer(
         off_hours_detector=RecordingDetector(),
         password_spray_detector=RecordingDetector(),
         successful_login_after_failures_detector=RecordingDetector(),
+        multiple_source_ips_detector=RecordingDetector(),
     )
     return analyzer, collector, detector
 
@@ -128,6 +130,10 @@ def create_detection_analyzer(
                 failure_threshold=3,
                 window=timedelta(minutes=5),
             )
+        ),
+        multiple_source_ips_detector=MultipleSourceIPsDetector(
+            source_ip_threshold=3,
+            window=timedelta(minutes=5),
         ),
     )
 
@@ -403,6 +409,7 @@ def test_native_result_and_record_errors_are_immutable() -> None:
 
     assert isinstance(result, WindowsNativeAnalysisResult)
     assert isinstance(result.successful_login_after_failures_findings, tuple)
+    assert isinstance(result.multiple_source_ips_findings, tuple)
     with pytest.raises(FrozenInstanceError):
         result.collected_record_count = 2
     with pytest.raises(FrozenInstanceError):
@@ -431,3 +438,20 @@ def test_native_pipeline_detects_successful_login_after_failures() -> None:
 
     assert len(result.successful_login_after_failures_findings) == 1
     assert result.successful_login_after_failures_findings[0].failure_count == 3
+
+
+def test_native_pipeline_detects_multiple_source_ips() -> None:
+    records = tuple(
+        create_record(
+            event_id=4625,
+            timestamp=f"2026-08-18T09:0{minute}:00+00:00",
+            username="Admin",
+            source_ip=f"192.0.2.{minute + 1}",
+        )
+        for minute in range(3)
+    )
+
+    result = create_detection_analyzer(records).analyze()
+
+    assert len(result.multiple_source_ips_findings) == 1
+    assert result.multiple_source_ips_findings[0].distinct_source_ip_count == 3

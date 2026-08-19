@@ -9,6 +9,10 @@ from login_log_analyzer.brute_force import (
     BruteForceDetector,
     BruteForceFinding,
 )
+from login_log_analyzer.multiple_source_ips import (
+    MultipleSourceIPsDetector,
+    MultipleSourceIPsFinding,
+)
 from login_log_analyzer.off_hours import (
     OffHoursLoginDetector,
     OffHoursLoginFinding,
@@ -55,6 +59,7 @@ class WindowsJsonAnalysisResult:
         SuccessfulLoginAfterFailuresFinding,
         ...,
     ]
+    multiple_source_ips_findings: tuple[MultipleSourceIPsFinding, ...]
 
     @property
     def record_error_count(self) -> int:
@@ -69,6 +74,7 @@ class WindowsJsonFileAnalyzer:
         off_hours_detector: OffHoursLoginDetector,
         password_spray_detector: PasswordSprayDetector,
         successful_login_after_failures_detector: SuccessfulLoginAfterFailuresDetector,
+        multiple_source_ips_detector: MultipleSourceIPsDetector,
     ) -> None:
         self._windows_parser = windows_parser
         self._brute_force_detector = brute_force_detector
@@ -77,6 +83,7 @@ class WindowsJsonFileAnalyzer:
         self._successful_login_after_failures_detector = (
             successful_login_after_failures_detector
         )
+        self._multiple_source_ips_detector = multiple_source_ips_detector
 
     def analyze(self, path: Path) -> WindowsJsonAnalysisResult:
         with path.open("r", encoding="utf-8") as event_file:
@@ -130,6 +137,9 @@ class WindowsJsonFileAnalyzer:
                 self._successful_login_after_failures_detector.detect(
                     normalized_events
                 )
+            ),
+            multiple_source_ips_findings=tuple(
+                self._multiple_source_ips_detector.detect(normalized_events)
             ),
         )
 

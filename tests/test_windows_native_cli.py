@@ -28,6 +28,7 @@ def create_result(*, findings: bool = False) -> WindowsNativeAnalysisResult:
             off_hours_findings=(),
             password_spray_findings=(),
             successful_login_after_failures_findings=(),
+            multiple_source_ips_findings=(),
         )
 
     return WindowsNativeAnalysisResult(
@@ -64,6 +65,7 @@ def create_result(*, findings: bool = False) -> WindowsNativeAnalysisResult:
             ),
         ),
         successful_login_after_failures_findings=(),
+        multiple_source_ips_findings=(),
     )
 
 

@@ -13,6 +13,10 @@ from login_log_analyzer.linux_file_analysis import (
     LinuxLogAnalysisResult,
     LinuxLogFileAnalyzer,
 )
+from login_log_analyzer.multiple_source_ips import (
+    MultipleSourceIPsDetector,
+    MultipleSourceIPsFinding,
+)
 from login_log_analyzer.off_hours import OffHoursLoginDetector, OffHoursLoginFinding
 from login_log_analyzer.password_spray import (
     PasswordSprayDetector,
@@ -50,6 +54,8 @@ DEFAULT_PASSWORD_SPRAY_THRESHOLD = 5
 DEFAULT_PASSWORD_SPRAY_WINDOW_MINUTES = 10
 DEFAULT_SUCCESS_AFTER_FAILURES_THRESHOLD = 5
 DEFAULT_SUCCESS_AFTER_FAILURES_WINDOW_MINUTES = 5
+DEFAULT_MULTIPLE_SOURCE_IPS_THRESHOLD = 5
+DEFAULT_MULTIPLE_SOURCE_IPS_WINDOW_MINUTES = 10
 DEFAULT_ALLOWED_WEEKDAYS = "mon,tue,wed,thu,fri"
 DEFAULT_ALLOWED_START = "08:00"
 DEFAULT_ALLOWED_END = "18:00"
@@ -165,6 +171,18 @@ def add_detector_arguments(command_parser: argparse.ArgumentParser) -> None:
         type=int,
         default=DEFAULT_SUCCESS_AFTER_FAILURES_WINDOW_MINUTES,
         help="janela entre as falhas e o login bem-sucedido em minutos",
+    )
+    command_parser.add_argument(
+        "--multiple-source-ips-threshold",
+        type=int,
+        default=DEFAULT_MULTIPLE_SOURCE_IPS_THRESHOLD,
+        help="quantidade de IPs de origem distintos contra uma conta",
+    )
+    command_parser.add_argument(
+        "--multiple-source-ips-window-minutes",
+        type=int,
+        default=DEFAULT_MULTIPLE_SOURCE_IPS_WINDOW_MINUTES,
+        help="janela de múltiplos IPs de origem em minutos",
     )
     command_parser.add_argument(
         "--allowed-weekdays",
@@ -289,6 +307,7 @@ def create_detectors(
     OffHoursLoginDetector,
     PasswordSprayDetector,
     SuccessfulLoginAfterFailuresDetector,
+    MultipleSourceIPsDetector,
 ]:
     return (
         BruteForceDetector(
@@ -310,6 +329,10 @@ def create_detectors(
                 minutes=arguments.success_after_failures_window_minutes
             ),
         ),
+        MultipleSourceIPsDetector(
+            source_ip_threshold=arguments.multiple_source_ips_threshold,
+            window=timedelta(minutes=arguments.multiple_source_ips_window_minutes),
+        ),
     )
 
 
@@ -319,6 +342,7 @@ def create_linux_analyzer(arguments: argparse.Namespace) -> LinuxLogFileAnalyzer
         off_hours_detector,
         password_spray_detector,
         successful_login_after_failures_detector,
+        multiple_source_ips_detector,
     ) = create_detectors(arguments)
     return LinuxLogFileAnalyzer(
         parser=LinuxAuthenticationParser(
@@ -331,6 +355,7 @@ def create_linux_analyzer(arguments: argparse.Namespace) -> LinuxLogFileAnalyzer
         successful_login_after_failures_detector=(
             successful_login_after_failures_detector
         ),
+        multiple_source_ips_detector=multiple_source_ips_detector,
     )
 
 
@@ -340,6 +365,7 @@ def create_windows_analyzer(arguments: argparse.Namespace) -> WindowsJsonFileAna
         off_hours_detector,
         password_spray_detector,
         successful_login_after_failures_detector,
+        multiple_source_ips_detector,
     ) = create_detectors(arguments)
     return WindowsJsonFileAnalyzer(
         windows_parser=WindowsAuthenticationParser(),
@@ -349,6 +375,7 @@ def create_windows_analyzer(arguments: argparse.Namespace) -> WindowsJsonFileAna
         successful_login_after_failures_detector=(
             successful_login_after_failures_detector
         ),
+        multiple_source_ips_detector=multiple_source_ips_detector,
     )
 
 
@@ -360,6 +387,7 @@ def create_windows_native_analyzer(
         off_hours_detector,
         password_spray_detector,
         successful_login_after_failures_detector,
+        multiple_source_ips_detector,
     ) = create_detectors(arguments)
     return WindowsNativeEventAnalyzer(
         collector=WindowsEventLogCollector(),
@@ -370,6 +398,7 @@ def create_windows_native_analyzer(
         successful_login_after_failures_detector=(
             successful_login_after_failures_detector
         ),
+        multiple_source_ips_detector=multiple_source_ips_detector,
     )
 
 
@@ -446,6 +475,24 @@ def render_successful_login_after_failures_findings(
         )
 
 
+def render_multiple_source_ips_findings(
+    findings: tuple[MultipleSourceIPsFinding, ...],
+    output: TextIO,
+) -> None:
+    if not findings:
+        return
+
+    print("\nMúltiplos IPs de origem contra uma conta", file=output)
+    for finding in findings:
+        print(
+            f"  {finding.username} | {finding.first_observed.isoformat()} -> "
+            f"{finding.last_observed.isoformat()} | "
+            f"IPs distintos: {finding.distinct_source_ip_count} | "
+            f"IPs: {', '.join(str(source_ip) for source_ip in finding.source_ips)}",
+            file=output,
+        )
+
+
 def render_linux_result(
     path: Path,
     result: LinuxLogAnalysisResult,
@@ -468,6 +515,11 @@ def render_linux_result(
         f"{len(result.successful_login_after_failures_findings)}",
         file=output,
     )
+    print(
+        "  Achados de múltiplos IPs de origem: "
+        f"{len(result.multiple_source_ips_findings)}",
+        file=output,
+    )
 
     if result.parse_errors:
         print("\nErros de parsing", file=output)
@@ -481,6 +533,7 @@ def render_linux_result(
         result.successful_login_after_failures_findings,
         output,
     )
+    render_multiple_source_ips_findings(result.multiple_source_ips_findings, output)
 
 
 def render_windows_result(
@@ -508,6 +561,11 @@ def render_windows_result(
         f"{len(result.successful_login_after_failures_findings)}",
         file=output,
     )
+    print(
+        "  Achados de múltiplos IPs de origem: "
+        f"{len(result.multiple_source_ips_findings)}",
+        file=output,
+    )
 
     if result.record_errors:
         print("\nErros de registro", file=output)
@@ -521,6 +579,7 @@ def render_windows_result(
         result.successful_login_after_failures_findings,
         output,
     )
+    render_multiple_source_ips_findings(result.multiple_source_ips_findings, output)
 
 
 def render_windows_native_result(
@@ -546,6 +605,11 @@ def render_windows_native_result(
         f"{len(result.successful_login_after_failures_findings)}",
         file=output,
     )
+    print(
+        "  Achados de múltiplos IPs de origem: "
+        f"{len(result.multiple_source_ips_findings)}",
+        file=output,
+    )
 
     if result.record_errors:
         print("\nErros de registro", file=output)
@@ -559,6 +623,7 @@ def render_windows_native_result(
         result.successful_login_after_failures_findings,
         output,
     )
+    render_multiple_source_ips_findings(result.multiple_source_ips_findings, output)
 
 
 def export_requested_reports(
