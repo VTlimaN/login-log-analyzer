@@ -5,21 +5,13 @@ O projeto separa ingestão, normalização, detecção, orquestração e apresen
 ## Visão geral
 
 ```text
-CLI analyze-linux          -> LinuxLogFileAnalyzer ------> LinuxAuthenticationParser ----\
-CLI analyze-windows        -> WindowsJsonFileAnalyzer ---> WindowsAuthenticationParser ----> AuthenticationEvent[]
-CLI analyze-windows-native -> WindowsNativeEventAnalyzer -> WindowsAuthenticationParser --/             |
-                                                                                                         +-> BruteForceDetector
-                                                                                                         +-> OffHoursLoginDetector
-                                                                                                         +-> PasswordSprayDetector
-                                                                                                         +-> SuccessfulLoginAfterFailuresDetector
-                                                                                                         +-> MultipleSourceIPsDetector
-                                                                                                                 |
-                                                                                                                 v
-                                                                                                      resultado estruturado
-                                                                                                         /          \
-                                                                                              relatório da CLI   serialização
-                                                                                                                  /       \
-                                                                                                               JSON       CSV
+Linux -> LinuxAuthenticationParser -------------------------------> AuthenticationEvent[] -> detectores heurísticos --\
+Windows JSON/nativo -> roteamento -> 4624/4625 -> WindowsAuthenticationParser -------------------------------> resultado
+                                  \-> 4740 -> WindowsAccountLockoutParser -> AccountLockoutEvent[] ----------/
+                                                                                                                  |
+                                                                                                       CLI / serialização
+                                                                                                            /       \
+                                                                                                         JSON       CSV
 ```
 
 As responsabilidades são:
@@ -27,8 +19,9 @@ As responsabilidades são:
 - **CLI:** valida argumentos, compõe objetos configurados, inicia a análise, formata o resultado e solicita exportações opcionais;
 - **analisadores de arquivo:** leem a fonte, coordenam parsing e detectores e produzem um resultado estruturado;
 - **parsers:** traduzem a representação específica da fonte;
-- **`AuthenticationEvent`:** representa a semântica comum de autenticação;
-- **detectores:** aplicam regras de segurança somente aos eventos normalizados.
+- **`AuthenticationEvent`:** representa a semântica comum de autenticação de Linux e Windows 4624/4625;
+- **`AccountLockoutEvent`:** representa uma observação direta de bloqueio Windows 4740;
+- **detectores:** aplicam regras heurísticas somente aos `AuthenticationEvent` normalizados.
 
 ## Normalização
 
@@ -40,7 +33,7 @@ Linux e Windows registram autenticação com estruturas diferentes. A normaliza�
 - `platform`: Linux ou Windows;
 - `source_ip`: IPv4, IPv6 ou ausência de origem significativa.
 
-Timestamps sem timezone são rejeitados para evitar comparações ambíguas. Endereços são validados pelos tipos de IP da biblioteca padrão. O modelo contém apenas o contexto exigido pelas regras atuais; informações específicas, como Windows Logon Type, não são acrescentadas sem uma necessidade concreta.
+Timestamps sem timezone são rejeitados para evitar comparações ambíguas. Endereços são validados pelos tipos de IP da biblioteca padrão. `AccountLockoutEvent` é uma família normalizada separada, com timestamp, username, plataforma Windows e contextos opcionais de domínio, computador de origem e computador que registrou o evento. Ele não possui `source_ip` nem `AuthenticationOutcome`.
 
 ## Ingestão Linux
 
@@ -54,28 +47,31 @@ O timestamp syslog não contém ano nem timezone, então o chamador fornece esse
 
 ## Ingestão Windows
 
-O Windows possui dois caminhos independentes que convergem no mesmo `WindowsAuthenticationParser`.
+O Windows possui dois caminhos de origem que aplicam o mesmo roteamento explícito por Event ID.
 
 ### Windows JSON
 
-`WindowsJsonFileAnalyzer` lê em UTF-8 um array JSON de eventos previamente extraídos. Cada timestamp é convertido de ISO 8601 com offset explícito antes de chegar ao parser, que aceita:
+`WindowsJsonFileAnalyzer` lê em UTF-8 um array JSON de eventos previamente extraídos. Cada timestamp suportado é convertido de ISO 8601 com offset explícito. O roteamento usa:
 
 - Event ID 4624 como sucesso;
 - Event ID 4625 como falha.
+- Event ID 4740 como observação de bloqueio por `WindowsAccountLockoutParser`.
 
 Event IDs inteiros diferentes são contabilizados como não suportados. Registros inválidos geram `WindowsJsonRecordError` e os registros seguintes continuam sendo processados. JSON sintaticamente inválido ou com raiz diferente de array impede a análise do documento. O JSON permanece como formato de intercâmbio para análise portátil ou offline.
 
 ### Windows Security Event Log nativo
 
-`WindowsEventLogCollector` executa `wevtutil` sem shell e consulta somente o log `Security`, usando XPath limitado aos Event IDs 4624 e 4625. A saída XML estruturada fornece `EventID`, `TimeCreated SystemTime`, `TargetUserName` e `IpAddress`. O limite padrão de coleta é 100 eventos e permanece configurável.
+`WindowsEventLogCollector` executa `wevtutil` sem shell e consulta somente o log `Security`, usando XPath limitado aos Event IDs 4624, 4625 e 4740. A saída XML estruturada fornece os campos de autenticação existentes e, para 4740, `TargetUserName`, `TargetDomainName`, `CallerComputerName` e `System/Computer`. O limite padrão de coleta é 100 eventos e permanece configurável.
 
-`WindowsNativeEventAnalyzer` converte cada elemento XML para o mapeamento já aceito pelo `WindowsAuthenticationParser`. Assim, mapeamento de sucesso/falha, validação de username/IP e plataforma continuam centralizados no parser existente. Registros individuais inválidos são contabilizados sem armazenar o XML bruto; indisponibilidade do coletor, plataforma incompatível, falha da query e documento XML estruturalmente inválido são erros operacionais distintos.
+`WindowsNativeEventAnalyzer` roteia cada elemento XML pelo Event ID. 4624/4625 continuam no `WindowsAuthenticationParser`; 4740 segue para `WindowsAccountLockoutParser`. `TargetUserName` é a conta bloqueada, `CallerComputerName` permanece contexto de computador e `System/Computer` torna-se `recording_computer`. Registros individuais inválidos são contabilizados sem armazenar o XML bruto.
 
 Esse caminho é somente leitura, local e exclusivo do Windows. Ele não eleva privilégios, modifica políticas, limpa logs, lê EVTX nem coleta eventos remotos.
 
 ## Detecção
 
 Todos os detectores recebem a mesma coleção de `AuthenticationEvent` e não conhecem o formato original.
+
+`AccountLockoutEvent` nunca é enviado a detectores. O Event ID 4740 já é uma observação explícita do sistema operacional, não um finding heurístico e não uma falha de autenticação sintética.
 
 ### Força bruta
 
@@ -103,7 +99,7 @@ Um finding é emitido quando o threshold de IPs distintos é atingido e novos fi
 
 ## Resultados e erros
 
-Os resultados Linux e Windows são dataclasses imutáveis com contagens, erros recuperáveis e findings separados por detector. Eles permanecem específicos para que linhas Linux e registros Windows sejam descritos com precisão.
+Os resultados Linux e Windows são dataclasses imutáveis com contagens, erros recuperáveis e findings separados por detector. Resultados Windows também mantêm `account_lockout_events` e `account_lockout_count`; `parsed_event_count` continua contando apenas autenticações normalizadas.
 
 Falhas de filesystem e decoding não são confundidas com registros malformados. Na CLI, uma análise concluída retorna `0`, mesmo com findings ou erros recuperáveis. Falhas operacionais retornam `1`, e argumentos ou configurações inválidas retornam `2`. Mensagens de erro não reproduzem a linha ou o objeto bruto potencialmente sensível.
 
@@ -111,9 +107,9 @@ Falhas de filesystem e decoding não são confundidas com registros malformados.
 
 A camada `reporting` recebe um resultado de análise concluído e permanece a jusante de ingestão, normalização e detecção. Ela não altera eventos nem findings.
 
-O JSON representa o resultado completo com `report_version` 1, origem, resumo, erros recuperáveis e categorias de findings. As origens estáveis são `linux_file`, `windows_json` e `windows_native`. O CSV representa somente findings em colunas unificadas, usando os tipos `brute_force`, `off_hours`, `password_spray`, `successful_login_after_failures` e `multiple_source_ips`; campos não aplicáveis permanecem vazios. O finding de sucesso após falhas usa `first_failure`, `last_failure` e `successful_login`. O finding de múltiplas origens usa `distinct_source_ip_count` e `source_ips`, com IPs separados por `;` no CSV.
+O JSON representa o resultado completo com `report_version` 1, origem, resumo, erros recuperáveis e categorias de findings. Resultados Windows acrescentam `account_lockout_count` ao resumo e `account_lockouts` como coleção de observações diretas. O CSV representa somente findings heurísticos e deliberadamente não converte lockouts em `finding_type`.
 
-`report_version` permanece em 1 porque categorias de finding e colunas adicionais são extensões aditivas do contrato, que já separa findings por tipo. Nenhuma chave existente foi removida ou teve semântica alterada.
+`report_version` permanece em 1 porque `account_lockouts` e sua contagem são extensões aditivas para fontes Windows. Nenhuma chave existente foi removida ou reinterpretada, e o contrato CSV não mudou.
 
 Ambos usam UTF-8 e timestamps ISO 8601 sem conversão para o timezone da máquina. A gravação ocorre primeiro em arquivo temporário no diretório de destino e depois por substituição atômica. Destinos existentes são preservados por padrão e só podem ser substituídos por solicitação explícita.
 
