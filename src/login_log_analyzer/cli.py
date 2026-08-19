@@ -18,6 +18,13 @@ from login_log_analyzer.password_spray import (
     PasswordSprayDetector,
     PasswordSprayFinding,
 )
+from login_log_analyzer.reporting import (
+    AnalysisResult,
+    ReportConfigurationError,
+    export_csv_report,
+    export_json_report,
+    validate_report_destinations,
+)
 from login_log_analyzer.windows_authentication import WindowsAuthenticationParser
 from login_log_analyzer.windows_json_analysis import (
     WindowsJsonAnalysisResult,
@@ -167,6 +174,28 @@ def add_detector_arguments(command_parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_report_arguments(command_parser: argparse.ArgumentParser) -> None:
+    command_parser.add_argument(
+        "--output-json",
+        type=Path,
+        default=argparse.SUPPRESS,
+        metavar="PATH",
+        help="salva o relatório completo em JSON",
+    )
+    command_parser.add_argument(
+        "--output-csv",
+        type=Path,
+        default=argparse.SUPPRESS,
+        metavar="PATH",
+        help="salva os achados em CSV",
+    )
+    command_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="permite substituir relatórios de destino existentes",
+    )
+
+
 def create_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="login-log-analyzer",
@@ -198,6 +227,7 @@ def create_argument_parser() -> argparse.ArgumentParser:
         help="offset UTC explícito, por exemplo -03:00",
     )
     add_detector_arguments(linux_parser)
+    add_report_arguments(linux_parser)
 
     windows_parser = commands.add_parser(
         "analyze-windows",
@@ -213,6 +243,7 @@ def create_argument_parser() -> argparse.ArgumentParser:
         help="arquivo JSON Windows em UTF-8",
     )
     add_detector_arguments(windows_parser)
+    add_report_arguments(windows_parser)
 
     windows_native_parser = commands.add_parser(
         "analyze-windows-native",
@@ -229,6 +260,7 @@ def create_argument_parser() -> argparse.ArgumentParser:
         help="quantidade máxima de eventos Windows coletados",
     )
     add_detector_arguments(windows_native_parser)
+    add_report_arguments(windows_native_parser)
     return parser
 
 
@@ -435,6 +467,51 @@ def render_windows_native_result(
     render_password_spray_findings(result.password_spray_findings, output)
 
 
+def export_requested_reports(
+    arguments: argparse.Namespace,
+    result: AnalysisResult,
+    output: TextIO,
+    error_output: TextIO,
+) -> int:
+    json_destination = getattr(arguments, "output_json", None)
+    csv_destination = getattr(arguments, "output_csv", None)
+    if json_destination is None and csv_destination is None:
+        return 0
+
+    try:
+        validate_report_destinations(
+            json_destination,
+            csv_destination,
+            overwrite=arguments.overwrite,
+        )
+    except ReportConfigurationError as error:
+        print(f"Erro de configuração de relatório: {error}", file=error_output)
+        return 2
+    except OSError as error:
+        print(f"Erro ao salvar relatório: {error}", file=error_output)
+        return 1
+
+    try:
+        if json_destination is not None:
+            export_json_report(
+                result,
+                json_destination,
+                overwrite=arguments.overwrite,
+            )
+            print(f"Relatório JSON salvo em: {json_destination}", file=output)
+        if csv_destination is not None:
+            export_csv_report(
+                result,
+                csv_destination,
+                overwrite=arguments.overwrite,
+            )
+            print(f"Relatório CSV salvo em: {csv_destination}", file=output)
+    except OSError as error:
+        print(f"Erro ao salvar relatório: {error}", file=error_output)
+        return 1
+    return 0
+
+
 def run_analyze_linux(
     arguments: argparse.Namespace,
     output: TextIO,
@@ -453,7 +530,7 @@ def run_analyze_linux(
         return 1
 
     render_linux_result(arguments.path, result, output)
-    return 0
+    return export_requested_reports(arguments, result, output, error_output)
 
 
 def run_analyze_windows(
@@ -479,7 +556,7 @@ def run_analyze_windows(
         return 1
 
     render_windows_result(arguments.path, result, output)
-    return 0
+    return export_requested_reports(arguments, result, output, error_output)
 
 
 def run_analyze_windows_native(
@@ -500,7 +577,7 @@ def run_analyze_windows_native(
         return 1
 
     render_windows_native_result(result, output)
-    return 0
+    return export_requested_reports(arguments, result, output, error_output)
 
 
 def normalize_timezone_offset_arguments(arguments: Sequence[str]) -> list[str]:

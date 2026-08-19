@@ -11,6 +11,7 @@ A versão declarada no pacote é `0.1.0`. O repositório está preparado como ca
 - detecção de força bruta, password spraying e login fora do horário;
 - pipelines de análise de arquivo com erros recuperáveis estruturados;
 - comandos de terminal para análise Linux, Windows JSON e Windows Security Event Log;
+- exportação opcional de relatórios em JSON e CSV;
 - suporte a IPv4, IPv6 e timestamps com fuso horário explícito.
 
 Os três detectores operam sobre `AuthenticationEvent`, sem depender da sintaxe original do Linux ou do Windows:
@@ -134,8 +135,23 @@ O relatório mostra contagens de entrada, eventos normalizados, entradas não su
 Os códigos de saída são:
 
 - `0`: análise concluída, inclusive quando existem achados ou erros recuperáveis;
-- `1`: falha operacional ou documento Windows inválido;
+- `1`: falha operacional, documento Windows inválido ou falha ao gravar relatório;
 - `2`: argumento ou configuração inválida.
+
+### Exportação de relatórios
+
+Todos os comandos de análise aceitam `--output-json PATH` e `--output-csv PATH`. Os formatos podem ser solicitados separadamente ou na mesma execução:
+
+```powershell
+python -m login_log_analyzer analyze-linux .\samples\demo_linux_attack.log --year 2026 --timezone-offset=-03:00 --output-json .\linux-report.json --output-csv .\linux-findings.csv
+python -m login_log_analyzer analyze-windows .\samples\demo_windows_attack.json --output-json .\windows-report.json --output-csv .\windows-findings.csv
+```
+
+O JSON é o relatório estruturado completo: inclui resumo, erros recuperáveis e as três categorias de achados. O CSV é uma tabela plana com uma linha por achado, destinada à inspeção em planilhas e ferramentas de dados; contagens e erros de ingestão não fazem parte dele. Um CSV sem achados contém somente o cabeçalho.
+
+Por segurança, um destino existente é rejeitado. `--overwrite` permite sua substituição explícita. Os destinos JSON e CSV devem ser diferentes e seus diretórios-pai precisam existir.
+
+O contrato inicial usa `report_version` igual a `1`. Os identificadores de origem são `linux_file`, `windows_json` e `windows_native`; os tipos de achado são `brute_force`, `off_hours` e `password_spray`. Timestamps permanecem em ISO 8601 com seus offsets, IPs são strings e uma origem ausente é representada como `null` no JSON ou campo vazio no CSV.
 
 ## Demonstração reproduzível
 
@@ -188,7 +204,7 @@ Os testes cobrem modelos, parsers, regras, pipelines, CLI e as amostras de demon
 - arquivos EVTX não são lidos e não existe coleta de computadores remotos;
 - as regras são heurísticas configuráveis e não mantêm estado persistente de incidentes;
 - não há baseline comportamental, machine learning, threat intelligence ou GeoIP;
-- não há exportação de relatórios, banco de dados, integração com SIEM, GUI ou interface web.
+- a exportação se limita a JSON estruturado e CSV de achados; não há banco de dados, integração com SIEM, GUI ou interface web.
 
 ## Segurança dos dados
 
