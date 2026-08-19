@@ -6,6 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from login_log_analyzer.account_lifecycle import (
+    AccountLifecycleAction,
+    AccountLifecycleEvent,
+)
 from login_log_analyzer.account_lockout import AccountLockoutEvent
 from login_log_analyzer.authentication import AuthenticationPlatform
 from login_log_analyzer.brute_force import BruteForceFinding
@@ -53,6 +57,27 @@ def account_lockouts() -> tuple[AccountLockoutEvent, ...]:
         AccountLockoutEvent(
             timestamp=datetime.fromisoformat("2026-08-19T11:30:00-03:00"),
             username="NoContextUser",
+            platform=AuthenticationPlatform.WINDOWS,
+        ),
+    )
+
+
+def account_lifecycle_events() -> tuple[AccountLifecycleEvent, ...]:
+    return (
+        AccountLifecycleEvent(
+            timestamp=datetime.fromisoformat("2026-08-19T14:00:00-03:00"),
+            username="LifecycleUser",
+            action=AccountLifecycleAction.CREATED,
+            platform=AuthenticationPlatform.WINDOWS,
+            target_domain="LAB",
+            subject_username="Administrator",
+            subject_domain="LAB",
+            recording_computer="DC01.lab.invalid",
+        ),
+        AccountLifecycleEvent(
+            timestamp=datetime.fromisoformat("2026-08-19T15:00:00+00:00"),
+            username="NoContextUser",
+            action=AccountLifecycleAction.UNLOCKED,
             platform=AuthenticationPlatform.WINDOWS,
         ),
     )
@@ -154,6 +179,7 @@ def linux_result(*, include_findings: bool = True) -> LinuxLogAnalysisResult:
                 successful_login_after_failures_findings=findings()[3],
                 multiple_source_ips_findings=findings()[4],
                 account_lockout_events=account_lockouts(),
+                account_lifecycle_events=account_lifecycle_events(),
             ),
             "windows_json",
             "total_records",
@@ -171,6 +197,7 @@ def linux_result(*, include_findings: bool = True) -> LinuxLogAnalysisResult:
                 successful_login_after_failures_findings=findings()[3],
                 multiple_source_ips_findings=findings()[4],
                 account_lockout_events=account_lockouts(),
+                account_lifecycle_events=account_lifecycle_events(),
             ),
             "windows_native",
             "collected_record_count",
@@ -231,6 +258,8 @@ def test_exports_complete_json_contract(
     if source == "linux_file":
         assert "account_lockout_count" not in document["summary"]
         assert "account_lockouts" not in document
+        assert "account_lifecycle_count" not in document["summary"]
+        assert "account_lifecycle" not in document
     else:
         assert document["summary"]["account_lockout_count"] == 2
         assert document["account_lockouts"] == [
@@ -248,6 +277,29 @@ def test_exports_complete_json_contract(
                 "platform": "windows",
                 "target_domain": None,
                 "caller_computer": None,
+                "recording_computer": None,
+            },
+        ]
+        assert document["summary"]["account_lifecycle_count"] == 2
+        assert document["account_lifecycle"] == [
+            {
+                "timestamp": "2026-08-19T14:00:00-03:00",
+                "username": "LifecycleUser",
+                "action": "created",
+                "platform": "windows",
+                "target_domain": "LAB",
+                "subject_username": "Administrator",
+                "subject_domain": "LAB",
+                "recording_computer": "DC01.lab.invalid",
+            },
+            {
+                "timestamp": "2026-08-19T15:00:00+00:00",
+                "username": "NoContextUser",
+                "action": "unlocked",
+                "platform": "windows",
+                "target_domain": None,
+                "subject_username": None,
+                "subject_domain": None,
                 "recording_computer": None,
             },
         ]
@@ -297,8 +349,8 @@ def test_exports_header_only_csv_when_there_are_no_findings(tmp_path: Path) -> N
     assert rows == [list(CSV_COLUMNS)]
 
 
-def test_csv_excludes_direct_account_lockout_observations(tmp_path: Path) -> None:
-    destination = tmp_path / "lockouts.csv"
+def test_csv_excludes_direct_windows_observations(tmp_path: Path) -> None:
+    destination = tmp_path / "observations.csv"
     result = WindowsJsonAnalysisResult(
         total_records=1,
         parsed_event_count=0,
@@ -310,6 +362,7 @@ def test_csv_excludes_direct_account_lockout_observations(tmp_path: Path) -> Non
         successful_login_after_failures_findings=(),
         multiple_source_ips_findings=(),
         account_lockout_events=account_lockouts(),
+        account_lifecycle_events=account_lifecycle_events(),
     )
 
     export_csv_report(result, destination)

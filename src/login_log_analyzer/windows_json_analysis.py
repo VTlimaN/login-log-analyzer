@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from login_log_analyzer.account_lifecycle import AccountLifecycleEvent
 from login_log_analyzer.account_lockout import AccountLockoutEvent
 from login_log_analyzer.authentication import AuthenticationEvent
 from login_log_analyzer.brute_force import (
@@ -36,6 +37,11 @@ from login_log_analyzer.windows_account_lockout import (
     WindowsAccountLockoutParseError,
     WindowsAccountLockoutParser,
 )
+from login_log_analyzer.windows_account_lifecycle import (
+    WINDOWS_ACCOUNT_LIFECYCLE_ACTIONS,
+    WindowsAccountLifecycleParseError,
+    WindowsAccountLifecycleParser,
+)
 
 
 class WindowsJsonFormatError(ValueError):
@@ -67,6 +73,7 @@ class WindowsJsonAnalysisResult:
     ]
     multiple_source_ips_findings: tuple[MultipleSourceIPsFinding, ...]
     account_lockout_events: tuple[AccountLockoutEvent, ...]
+    account_lifecycle_events: tuple[AccountLifecycleEvent, ...] = ()
 
     @property
     def record_error_count(self) -> int:
@@ -76,12 +83,17 @@ class WindowsJsonAnalysisResult:
     def account_lockout_count(self) -> int:
         return len(self.account_lockout_events)
 
+    @property
+    def account_lifecycle_count(self) -> int:
+        return len(self.account_lifecycle_events)
+
 
 class WindowsJsonFileAnalyzer:
     def __init__(
         self,
         windows_parser: WindowsAuthenticationParser,
         account_lockout_parser: WindowsAccountLockoutParser,
+        account_lifecycle_parser: WindowsAccountLifecycleParser,
         brute_force_detector: BruteForceDetector,
         off_hours_detector: OffHoursLoginDetector,
         password_spray_detector: PasswordSprayDetector,
@@ -90,6 +102,7 @@ class WindowsJsonFileAnalyzer:
     ) -> None:
         self._windows_parser = windows_parser
         self._account_lockout_parser = account_lockout_parser
+        self._account_lifecycle_parser = account_lifecycle_parser
         self._brute_force_detector = brute_force_detector
         self._off_hours_detector = off_hours_detector
         self._password_spray_detector = password_spray_detector
@@ -107,6 +120,7 @@ class WindowsJsonFileAnalyzer:
 
         events: list[AuthenticationEvent] = []
         account_lockout_events: list[AccountLockoutEvent] = []
+        account_lifecycle_events: list[AccountLifecycleEvent] = []
         record_errors: list[WindowsJsonRecordError] = []
         unsupported_record_count = 0
 
@@ -124,12 +138,19 @@ class WindowsJsonFileAnalyzer:
                     )
                     if lockout_event is not None:
                         account_lockout_events.append(lockout_event)
+                elif event_id in WINDOWS_ACCOUNT_LIFECYCLE_ACTIONS:
+                    lifecycle_event = self._account_lifecycle_parser.parse_event(
+                        event_data
+                    )
+                    if lifecycle_event is not None:
+                        account_lifecycle_events.append(lifecycle_event)
                 else:
                     unsupported_record_count += 1
             except (
                 WindowsJsonRecordConversionError,
                 WindowsAuthenticationParseError,
                 WindowsAccountLockoutParseError,
+                WindowsAccountLifecycleParseError,
             ) as error:
                 record_errors.append(
                     WindowsJsonRecordError(
@@ -164,6 +185,7 @@ class WindowsJsonFileAnalyzer:
                 self._multiple_source_ips_detector.detect(normalized_events)
             ),
             account_lockout_events=tuple(account_lockout_events),
+            account_lifecycle_events=tuple(account_lifecycle_events),
         )
 
     def _convert_record(self, record: object) -> Mapping[str, object]:
@@ -177,6 +199,7 @@ class WindowsJsonFileAnalyzer:
         if event_id not in (
             *SUPPORTED_EVENT_OUTCOMES,
             WINDOWS_ACCOUNT_LOCKOUT_EVENT_ID,
+            *WINDOWS_ACCOUNT_LIFECYCLE_ACTIONS,
         ):
             return event_data
 

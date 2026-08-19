@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ElementTree
 from dataclasses import dataclass
 from datetime import datetime
 
+from login_log_analyzer.account_lifecycle import AccountLifecycleEvent
 from login_log_analyzer.account_lockout import AccountLockoutEvent
 from login_log_analyzer.authentication import AuthenticationEvent
 from login_log_analyzer.brute_force import BruteForceDetector, BruteForceFinding
@@ -31,11 +32,17 @@ from login_log_analyzer.windows_account_lockout import (
     WindowsAccountLockoutParseError,
     WindowsAccountLockoutParser,
 )
+from login_log_analyzer.windows_account_lifecycle import (
+    WINDOWS_ACCOUNT_LIFECYCLE_ACTIONS,
+    WindowsAccountLifecycleParseError,
+    WindowsAccountLifecycleParser,
+)
 
 
 DEFAULT_WINDOWS_NATIVE_EVENT_LIMIT = 100
 WINDOWS_SECURITY_QUERY = (
-    "*[System[(EventID=4624 or EventID=4625 or EventID=4740)]]"
+    "*[System[(EventID=4624 or EventID=4625 or EventID=4720 or EventID=4722 "
+    "or EventID=4725 or EventID=4726 or EventID=4740 or EventID=4767)]]"
 )
 XML_DECLARATION_PATTERN = re.compile(r"<\?xml[^>]*\?>")
 
@@ -85,6 +92,7 @@ class WindowsNativeAnalysisResult:
     ]
     multiple_source_ips_findings: tuple[MultipleSourceIPsFinding, ...]
     account_lockout_events: tuple[AccountLockoutEvent, ...]
+    account_lifecycle_events: tuple[AccountLifecycleEvent, ...] = ()
 
     @property
     def record_error_count(self) -> int:
@@ -93,6 +101,10 @@ class WindowsNativeAnalysisResult:
     @property
     def account_lockout_count(self) -> int:
         return len(self.account_lockout_events)
+
+    @property
+    def account_lifecycle_count(self) -> int:
+        return len(self.account_lifecycle_events)
 
 
 class WindowsEventLogCollector:
@@ -196,6 +208,7 @@ class WindowsNativeEventAnalyzer:
         collector: WindowsEventLogCollector,
         windows_parser: WindowsAuthenticationParser,
         account_lockout_parser: WindowsAccountLockoutParser,
+        account_lifecycle_parser: WindowsAccountLifecycleParser,
         brute_force_detector: BruteForceDetector,
         off_hours_detector: OffHoursLoginDetector,
         password_spray_detector: PasswordSprayDetector,
@@ -205,6 +218,7 @@ class WindowsNativeEventAnalyzer:
         self._collector = collector
         self._windows_parser = windows_parser
         self._account_lockout_parser = account_lockout_parser
+        self._account_lifecycle_parser = account_lifecycle_parser
         self._brute_force_detector = brute_force_detector
         self._off_hours_detector = off_hours_detector
         self._password_spray_detector = password_spray_detector
@@ -220,6 +234,7 @@ class WindowsNativeEventAnalyzer:
         records = self._collector.collect(max_events)
         events: list[AuthenticationEvent] = []
         account_lockout_events: list[AccountLockoutEvent] = []
+        account_lifecycle_events: list[AccountLifecycleEvent] = []
         record_errors: list[WindowsNativeRecordError] = []
         unsupported_record_count = 0
 
@@ -237,12 +252,19 @@ class WindowsNativeEventAnalyzer:
                     )
                     if lockout_event is not None:
                         account_lockout_events.append(lockout_event)
+                elif event_id in WINDOWS_ACCOUNT_LIFECYCLE_ACTIONS:
+                    lifecycle_event = self._account_lifecycle_parser.parse_event(
+                        event_data
+                    )
+                    if lifecycle_event is not None:
+                        account_lifecycle_events.append(lifecycle_event)
                 else:
                     unsupported_record_count += 1
             except (
                 WindowsNativeRecordConversionError,
                 WindowsAuthenticationParseError,
                 WindowsAccountLockoutParseError,
+                WindowsAccountLifecycleParseError,
             ) as error:
                 record_errors.append(
                     WindowsNativeRecordError(
@@ -276,6 +298,7 @@ class WindowsNativeEventAnalyzer:
                 self._multiple_source_ips_detector.detect(normalized_events)
             ),
             account_lockout_events=tuple(account_lockout_events),
+            account_lifecycle_events=tuple(account_lifecycle_events),
         )
 
     def _convert_record(self, record: ElementTree.Element) -> dict[str, object]:
@@ -301,9 +324,12 @@ class WindowsNativeEventAnalyzer:
                 "event contains an invalid EventID"
             ) from error
 
-        if event_id not in SUPPORTED_EVENT_OUTCOMES:
-            if event_id != WINDOWS_ACCOUNT_LOCKOUT_EVENT_ID:
-                return {"event_id": event_id}
+        if event_id not in (
+            *SUPPORTED_EVENT_OUTCOMES,
+            WINDOWS_ACCOUNT_LOCKOUT_EVENT_ID,
+            *WINDOWS_ACCOUNT_LIFECYCLE_ACTIONS,
+        ):
+            return {"event_id": event_id}
 
         time_created = self._find_child(system, "TimeCreated")
         timestamp_value = (
@@ -327,6 +353,20 @@ class WindowsNativeEventAnalyzer:
                 "username": event_data.get("TargetUserName"),
                 "target_domain": event_data.get("TargetDomainName"),
                 "caller_computer": event_data.get("CallerComputerName"),
+                "recording_computer": recording_computer,
+            }
+
+        if event_id in WINDOWS_ACCOUNT_LIFECYCLE_ACTIONS:
+            recording_computer = self._element_text(
+                self._find_child(system, "Computer")
+            )
+            return {
+                "event_id": event_id,
+                "timestamp": timestamp,
+                "username": event_data.get("TargetUserName"),
+                "target_domain": event_data.get("TargetDomainName"),
+                "subject_username": event_data.get("SubjectUserName"),
+                "subject_domain": event_data.get("SubjectDomainName"),
                 "recording_computer": recording_computer,
             }
 

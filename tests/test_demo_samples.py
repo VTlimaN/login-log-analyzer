@@ -53,3 +53,21 @@ def test_account_lockout_sample_produces_direct_observation(
     assert "Bloqueios de conta: 1" in output
     assert "DemoLockedUser" in output
     assert "DEMO-WS-042" in output
+
+
+def test_account_lifecycle_sample_produces_direct_observations(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    arguments = [
+        "analyze-windows",
+        str(PROJECT_ROOT / "samples" / "windows_account_lifecycle.json"),
+    ]
+
+    assert main(arguments) == 0
+
+    output = capsys.readouterr().out
+    assert "Eventos de autenticação: 0" in output
+    assert "Eventos de ciclo de vida de conta: 5" in output
+    assert "DemoLifecycleUser" in output
+    for action in ("criada", "habilitada", "desabilitada", "excluída", "desbloqueada"):
+        assert action in output
