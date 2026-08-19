@@ -1,222 +1,86 @@
-# Direção arquitetural
+# Arquitetura
 
-O projeto seguirá, inicialmente, um fluxo de análise em etapas:
+O projeto separa ingestão, normalização, detecção, orquestração e apresentação. Essa divisão permite analisar fontes Linux e Windows com as mesmas regras sem misturar sintaxe de logs com lógica de segurança.
 
-```text
-logs brutos de autenticação
-            |
-            v
-parsing específico por plataforma
-            |
-            v
-eventos de autenticação normalizados
-            |
-            v
-regras de detecção
-            |
-            v
-achados ou alertas
-```
-
-Logs de autenticação do Windows e do Linux possuem formatos, campos e semânticas diferentes. A normalização deverá representar as informações relevantes em um formato comum, permitindo que regras de detecção operem independentemente da plataforma de origem quando isso for tecnicamente adequado.
-
-Essa separação também preserva as responsabilidades: componentes específicos interpretam cada fonte, enquanto a análise recebe eventos consistentes. Informações próprias de uma plataforma poderão continuar disponíveis quando forem necessárias para uma detecção correta.
-
-Este documento registra uma direção arquitetural, não um contrato de implementação permanentemente congelado. Interfaces, modelos e limites entre componentes serão definidos somente quando os requisitos concretos dos próximos milestones justificarem essas decisões.
-
-## Modelo normalizado atual
-
-Normalizar um evento significa converter informações relevantes de formatos diferentes para uma representação comum. Assim, eventos equivalentes do Windows e do Linux poderão ser analisados sem que as futuras regras de detecção precisem conhecer a sintaxe original de cada log.
-
-O `AuthenticationEvent` representa atualmente:
-
-- `timestamp`: instante do evento como `datetime` com informação explícita de fuso horário;
-- `username`: identidade usada na tentativa de autenticação;
-- `outcome`: resultado fechado em sucesso ou falha;
-- `platform`: plataforma de origem fechada em Linux ou Windows;
-- `source_ip`: endereço IPv4 ou IPv6 de origem, opcional quando o evento não fornece um endereço significativo.
-
-O modelo é imutável porque representa um fato observado. Timestamps sem fuso horário são rejeitados para evitar instantes ambíguos. O modelo preserva o offset informado pelo futuro parser e não executa conversões de fuso. Endereços IP usam os tipos da biblioteca padrão do Python, o que mantém uma representação validada sem dependências externas.
-
-Os campos atuais atendem às necessidades conhecidas de correlação por usuário e origem, análise temporal e distinção entre sucessos e falhas. Novos campos somente deverão ser incluídos quando um requisito concreto demonstrar sua necessidade. A direção futura de parsers e detecções continua não vinculante.
-
-## Caminho de parsing Linux
-
-O primeiro caminho concreto de normalização é:
+## Visão geral
 
 ```text
-linha de autenticação SSH em log Linux
-                    |
-                    v
-LinuxAuthenticationParser
-                    |
-                    v
-AuthenticationEvent
+CLI analyze-linux   -> LinuxLogFileAnalyzer   -> LinuxAuthenticationParser ----\
+                                                                              \
+                                                                               > AuthenticationEvent[]
+                                                                              /             |
+CLI analyze-windows -> WindowsJsonFileAnalyzer -> WindowsAuthenticationParser /              +-> BruteForceDetector
+                                                                                            +-> OffHoursLoginDetector
+                                                                                            +-> PasswordSprayDetector
+                                                                                                    |
+                                                                                                    v
+                                                                                         resultado estruturado
+                                                                                                    |
+                                                                                                    v
+                                                                                            relatório da CLI
 ```
 
-O parser reconhece um subconjunto explícito de mensagens de autenticação por senha do OpenSSH e traduz a sintaxe específica do Linux para o modelo normalizado. Linhas não suportadas são ignoradas, enquanto mensagens que correspondem aos eventos suportados, mas contêm dados malformados, produzem um erro de parsing.
+As responsabilidades são:
 
-Como o timestamp syslog tradicional não contém ano nem fuso horário, essas informações são fornecidas pelo chamador. O parser não consulta o relógio nem o fuso da máquina.
+- **CLI:** valida argumentos, compõe objetos configurados, inicia a análise e formata o resultado;
+- **analisadores de arquivo:** leem a fonte, coordenam parsing e detectores e produzem um resultado estruturado;
+- **parsers:** traduzem a representação específica da fonte;
+- **`AuthenticationEvent`:** representa a semântica comum de autenticação;
+- **detectores:** aplicam regras de segurança somente aos eventos normalizados.
 
-## Caminhos de normalização por plataforma
+## Normalização
 
-```text
-linha de autenticação SSH em log Linux
-                    |
-                    v
-LinuxAuthenticationParser
-                    |
-                    v
-AuthenticationEvent
-                    ^
-                    |
-WindowsAuthenticationParser
-                    ^
-                    |
-dados estruturados do Windows Security
-```
+Linux e Windows registram autenticação com estruturas diferentes. A normalização converte os campos necessários para uma representação comum e imutável:
 
-O `WindowsAuthenticationParser` recebe dados que já foram extraídos de um evento e reconhece somente os Event IDs 4624 e 4625. Ele não acessa APIs do sistema operacional nem interpreta XML ou arquivos EVTX. Eventos não suportados são ignorados e dados inválidos em eventos suportados produzem um erro de parsing.
+- `timestamp`: `datetime` com timezone explícito;
+- `username`: identidade preservada como observada;
+- `outcome`: sucesso ou falha;
+- `platform`: Linux ou Windows;
+- `source_ip`: IPv4, IPv6 ou ausência de origem significativa.
 
-Os parsers convergem representações específicas das plataformas para o mesmo modelo normalizado. Isso permite que futuras regras consumam `AuthenticationEvent` sem conhecer a sintaxe do OpenSSH ou a estrutura original do Windows Security.
+Timestamps sem timezone são rejeitados para evitar comparações ambíguas. Endereços são validados pelos tipos de IP da biblioteca padrão. O modelo contém apenas o contexto exigido pelas regras atuais; informações específicas, como Windows Logon Type, não são acrescentadas sem uma necessidade concreta.
 
-Eventos Windows também oferecem informações como Logon Type. Esse contexto não integra o modelo atual porque ainda não existe um requisito de detecção que o justifique. A futura coleta de eventos, possíveis extensões do modelo e as etapas de detecção permanecem direções arquiteturais não vinculantes.
+## Ingestão Linux
 
-## Detecção de força bruta
+`LinuxLogFileAnalyzer` lê arquivos UTF-8 incrementalmente, linha a linha. `LinuxAuthenticationParser` reconhece um subconjunto explícito das mensagens OpenSSH de senha:
 
-```text
-LinuxAuthenticationParser   --\
-                                > AuthenticationEvent -> BruteForceDetector -> BruteForceFinding
-WindowsAuthenticationParser --/
-```
+- `Accepted password`;
+- `Failed password`;
+- `Failed password for invalid user`.
 
-Parsing interpreta a representação específica de cada plataforma. Normalização converte os dados extraídos para `AuthenticationEvent`. Detecção opera somente sobre esses eventos e, por isso, não precisa conhecer formatos OpenSSH ou Windows Security.
+O timestamp syslog não contém ano nem timezone, então o chamador fornece esse contexto explicitamente. Linhas não suportadas são contabilizadas. Uma mensagem de formato suportado com dados inválidos gera `LinuxLogParseError`, mas não interrompe as demais linhas.
 
-A regra atual correlaciona falhas pela combinação exata de username e endereço IP de origem. Ela exige um número configurável de falhas dentro de uma janela inclusiva e compara instantes absolutos mesmo quando os eventos usam offsets diferentes. Sucessos não contam nem encerram a sequência, e eventos sem IP não participam da regra.
+## Ingestão Windows
 
-Depois que o threshold é atingido, o detector emite um único `BruteForceFinding` para a sequência contínua. Uma nova sequência para a mesma chave começa somente após uma lacuna maior que a janela entre falhas. Essa política evita findings repetidos para janelas sobrepostas sem introduzir estado persistente. A organização de futuras regras continua não vinculante.
+`WindowsJsonFileAnalyzer` lê em UTF-8 um array JSON de eventos previamente extraídos. Cada timestamp é convertido de ISO 8601 com offset explícito antes de chegar ao `WindowsAuthenticationParser`, que aceita:
 
-## Detecção por eventos normalizados
+- Event ID 4624 como sucesso;
+- Event ID 4625 como falha.
 
-```text
-LinuxAuthenticationParser   --\
-                                > AuthenticationEvent -> BruteForceDetector
-WindowsAuthenticationParser --/                      |-> OffHoursLoginDetector
-                                                        \-> PasswordSprayDetector
-```
+Event IDs inteiros diferentes são contabilizados como não suportados. Registros inválidos geram `WindowsJsonRecordError` e os registros seguintes continuam sendo processados. JSON sintaticamente inválido ou com raiz diferente de array impede a análise do documento. O JSON é um formato de intercâmbio; não existe coleta nativa do Windows Event Log nem leitura de EVTX.
 
-O `BruteForceDetector` analisa repetições de falhas dentro de uma janela. O `OffHoursLoginDetector` avalia cada sucesso contra uma agenda explícita. Ambos permanecem independentes da plataforma porque recebem somente eventos normalizados.
+## Detecção
 
-A agenda de login define weekdays pela convenção do Python, de segunda-feira `0` a domingo `6`, e um intervalo de horário com início incluído e fim excluído. A avaliação usa o horário de parede e o weekday do próprio timestamp, sem conversão automática para UTC.
+Todos os detectores recebem a mesma coleção de `AuthenticationEvent` e não conhecem o formato original.
 
-Em janelas noturnas, como `22:00 → 06:00`, o trecho a partir do início pertence ao weekday atual e o trecho antes do fim pertence ao weekday anterior. Início e fim iguais são rejeitados para evitar uma configuração ambígua. Cada sucesso fora da agenda produz um `OffHoursLoginFinding`; não existe agrupamento ou estado persistente. A estrutura de futuras regras continua não vinculante.
+### Força bruta
 
-## Detecção de password spraying
+`BruteForceDetector` correlaciona falhas pela combinação exata de username e IP de origem. O threshold e a janela inclusiva são configuráveis. Sucessos não contam nem reiniciam a sequência, e eventos sem IP não participam. Um achado é emitido por episódio contínuo para evitar alertas repetidos de janelas sobrepostas.
 
-Força bruta correlaciona uma origem e um username para encontrar falhas repetidas contra a mesma identidade. Password spraying correlaciona somente a origem e procura falhas contra pelo menos dois usernames distintos. Ambos utilizam janelas inclusivas e instantes absolutos.
+### Password spraying
 
-O `PasswordSprayDetector` preserva os usernames exatos e inclui no finding uma tupla ordenada das identidades que atingiram o threshold. Um único finding é emitido por sequência contínua; uma lacuna maior que a janela entre falhas da mesma origem inicia um novo episódio. Eventos Linux e Windows são tratados igualmente porque a detecção depende apenas de `AuthenticationEvent`. A estrutura de futuras regras continua não vinculante.
+`PasswordSprayDetector` correlaciona falhas pelo IP de origem e conta usernames distintos em uma janela inclusiva. Repetições contra a mesma identidade não aumentam a cardinalidade. Os usernames do achado têm ordem determinística e preservam seus valores exatos.
 
-## Análise de arquivo Linux
+### Login fora do horário
 
-```text
-arquivo de autenticação Linux
-            |
-            v
-LinuxLogFileAnalyzer
-            |
-            v
-leitura linha a linha em UTF-8
-            |
-            v
-LinuxAuthenticationParser
-            |
-            v
-AuthenticationEvent[]
-            |
-            +--> BruteForceDetector
-            +--> OffHoursLoginDetector
-            +--> PasswordSprayDetector
-            |
-            v
-LinuxLogAnalysisResult
-```
+`OffHoursLoginDetector` avalia somente sucessos contra weekdays e horários permitidos. O intervalo diário inclui o início e exclui o fim. Janelas que atravessam meia-noite usam o weekday de início: a parte após meia-noite pertence à janela iniciada no dia anterior. A avaliação usa o horário de parede e o timezone representados pelo evento.
 
-O `LinuxLogFileAnalyzer` coordena leitura, parsing, contabilidade e execução dos detectores. O parser continua responsável apenas por traduzir sintaxe OpenSSH; `AuthenticationEvent` continua sendo a representação normalizada; e cada detector preserva sua própria semântica e configuração.
+## Resultados e erros
 
-Linhas não suportadas são contabilizadas. Erros de parsing em mensagens suportadas são registrados com número da linha e mensagem, sem copiar a linha bruta nem interromper a análise. Exceções do filesystem e de decoding não são escondidas. O resultado imutável reúne contagens, erros e findings para a camada de apresentação. Uma arquitetura genérica de aplicação continua fora do contrato atual.
+Os resultados Linux e Windows são dataclasses imutáveis com contagens, erros recuperáveis e findings separados por detector. Eles permanecem específicos para que linhas Linux e registros Windows sejam descritos com precisão.
 
-## Análise de arquivo Windows JSON
+Falhas de filesystem e decoding não são confundidas com registros malformados. Na CLI, uma análise concluída retorna `0`, mesmo com findings ou erros recuperáveis. Falhas operacionais retornam `1`, e argumentos ou configurações inválidas retornam `2`. Mensagens de erro não reproduzem a linha ou o objeto bruto potencialmente sensível.
 
-```text
-arquivo JSON Windows
-          |
-          v
-WindowsJsonFileAnalyzer
-          |
-          v
-validação do documento e conversão dos registros
-          |
-          v
-WindowsAuthenticationParser
-          |
-          v
-AuthenticationEvent[]
-          |
-          +--> BruteForceDetector
-          +--> OffHoursLoginDetector
-          +--> PasswordSprayDetector
-          |
-          v
-WindowsJsonAnalysisResult
-```
+## Limites arquiteturais
 
-Os caminhos de aplicação Linux e Windows convergem no mesmo modelo e nos mesmos detectores. O caminho Linux traduz linhas OpenSSH, enquanto o caminho Windows carrega um array JSON em UTF-8 e converte timestamps ISO 8601 com offset antes de chamar o parser Windows.
-
-O `WindowsJsonFileAnalyzer` é responsável por leitura, validação da raiz, conversão, contabilidade e orquestração. O `WindowsAuthenticationParser` continua responsável pela semântica dos Event IDs 4624 e 4625. IDs não suportados são contabilizados, e erros individuais preservam o número do registro sem copiar seu conteúdo bruto. Falhas de sintaxe JSON invalidam o documento inteiro; falhas de um registro permitem continuar.
-
-JSON é um formato de intercâmbio para eventos previamente extraídos, não um mecanismo de coleta nativa. Acesso ao Windows Event Log, XML, EVTX e CLI Windows permanecem fora do contrato atual.
-
-## Interface de linha de comando
-
-```text
-CLI
- |
- +--> analyze-linux
- |          |
- |          v
- |    LinuxLogFileAnalyzer --> LinuxAuthenticationParser
- |                                      |
- |                                      v
- |                              AuthenticationEvent[]
- |                                      |
- |                                      v
- |                  BruteForceDetector / OffHoursLoginDetector /
- |                         PasswordSprayDetector
- |                                      |
- |                                      v
- |                              LinuxLogAnalysisResult
- |
- +--> analyze-windows
-            |
-            v
-     WindowsJsonFileAnalyzer --> WindowsAuthenticationParser
-                                         |
-                                         v
-                                 AuthenticationEvent[]
-                                         |
-                                         v
-                     BruteForceDetector / OffHoursLoginDetector /
-                            PasswordSprayDetector
-                                         |
-                                         v
-                                WindowsJsonAnalysisResult
-
-resultados específicos --> formatação específica da CLI
-```
-
-A CLI é uma camada fina de apresentação e composição. Ela valida a sintaxe dos argumentos, instancia parsers e detectores com a configuração fornecida, chama o analisador correspondente e formata seu resultado estruturado. Não contém regras de parsing, conversão JSON ou cálculos de detecção.
-
-Os dois comandos compartilham a configuração dos detectores e a apresentação dos mesmos tipos de finding. Somente Linux exige ano e offset do log, pois o JSON Windows já carrega timestamps ISO 8601 com timezone em cada registro. Resumos e erros permanecem específicos: Linux fala em linhas e parsing; Windows fala em registros JSON.
-
-Os parsers continuam responsáveis pela sintaxe das fontes, `AuthenticationEvent` pela normalização, os detectores pelas regras de segurança e cada camada de análise pela orquestração. O mesmo `main()` atende à execução por módulo e ao console script, sem criar uma segunda interface ou mover lógica de domínio para a apresentação.
+A aplicação não implementa coleta nativa do Windows, EVTX, persistência, exportação de relatório ou integração com SIEM. Os detectores mantêm semânticas explícitas e independentes; não há framework genérico de plugins ou estado persistente de incidentes. Extensões do modelo e dos fluxos devem ser justificadas por requisitos concretos.
