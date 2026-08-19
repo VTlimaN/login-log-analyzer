@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from login_log_analyzer.brute_force import BruteForceDetector
+from login_log_analyzer.multiple_source_ips import MultipleSourceIPsDetector
 from login_log_analyzer.off_hours import OffHoursLoginDetector
 from login_log_analyzer.password_spray import PasswordSprayDetector
 from login_log_analyzer.success_after_failures import (
@@ -46,6 +47,10 @@ def create_analyzer(
                 window=timedelta(minutes=5),
             )
         ),
+        multiple_source_ips_detector=MultipleSourceIPsDetector(
+            source_ip_threshold=3,
+            window=timedelta(minutes=5),
+        ),
     )
 
 
@@ -78,6 +83,7 @@ def test_analyzes_valid_empty_array(tmp_path: Path) -> None:
     assert result.off_hours_findings == ()
     assert result.password_spray_findings == ()
     assert result.successful_login_after_failures_findings == ()
+    assert result.multiple_source_ips_findings == ()
 
 
 def test_empty_file_is_invalid_json(tmp_path: Path) -> None:
@@ -353,6 +359,25 @@ def test_pipeline_detects_successful_login_after_failures(tmp_path: Path) -> Non
     assert result.successful_login_after_failures_findings[0].failure_count == 3
 
 
+def test_pipeline_detects_multiple_source_ips(tmp_path: Path) -> None:
+    path = tmp_path / "multiple-source-ips.json"
+    records = [
+        create_record(
+            event_id=4625,
+            timestamp=f"2026-08-18T09:0{minute}:00+00:00",
+            username="Admin",
+            source_ip=f"192.0.2.{minute + 1}",
+        )
+        for minute in range(3)
+    ]
+    write_document(path, records)
+
+    result = create_analyzer().analyze(path)
+
+    assert len(result.multiple_source_ips_findings) == 1
+    assert result.multiple_source_ips_findings[0].distinct_source_ip_count == 3
+
+
 def test_missing_file_error_propagates(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         create_analyzer().analyze(tmp_path / "missing.json")
@@ -381,6 +406,7 @@ def test_result_and_record_errors_are_immutable(tmp_path: Path) -> None:
     assert isinstance(result.record_errors, tuple)
     assert isinstance(result.record_errors[0], WindowsJsonRecordError)
     assert isinstance(result.successful_login_after_failures_findings, tuple)
+    assert isinstance(result.multiple_source_ips_findings, tuple)
     with pytest.raises(FrozenInstanceError):
         result.total_records = 2
     with pytest.raises(FrozenInstanceError):

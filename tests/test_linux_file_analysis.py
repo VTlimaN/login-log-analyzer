@@ -11,6 +11,7 @@ from login_log_analyzer.linux_file_analysis import (
     LinuxLogFileAnalyzer,
     LinuxLogParseError,
 )
+from login_log_analyzer.multiple_source_ips import MultipleSourceIPsDetector
 from login_log_analyzer.off_hours import OffHoursLoginDetector
 from login_log_analyzer.password_spray import PasswordSprayDetector
 from login_log_analyzer.success_after_failures import (
@@ -44,6 +45,10 @@ def create_analyzer(
                 window=timedelta(minutes=5),
             )
         ),
+        multiple_source_ips_detector=MultipleSourceIPsDetector(
+            source_ip_threshold=3,
+            window=timedelta(minutes=5),
+        ),
     )
 
 
@@ -65,6 +70,7 @@ def test_analyzes_empty_file(tmp_path: Path) -> None:
     assert result.off_hours_findings == ()
     assert result.password_spray_findings == ()
     assert result.successful_login_after_failures_findings == ()
+    assert result.multiple_source_ips_findings == ()
 
 
 def test_analyzes_file_with_only_unsupported_lines(tmp_path: Path) -> None:
@@ -87,6 +93,7 @@ def test_analyzes_file_with_only_unsupported_lines(tmp_path: Path) -> None:
     assert result.off_hours_findings == ()
     assert result.password_spray_findings == ()
     assert result.successful_login_after_failures_findings == ()
+    assert result.multiple_source_ips_findings == ()
 
 
 def test_mixed_file_counts_lines_and_continues_after_parse_error(
@@ -217,6 +224,10 @@ def test_parser_year_and_timezone_remain_explicit(tmp_path: Path) -> None:
                 window=timedelta(minutes=5),
             )
         ),
+        multiple_source_ips_detector=MultipleSourceIPsDetector(
+            source_ip_threshold=3,
+            window=timedelta(minutes=5),
+        ),
     )
 
     result = analyzer.analyze(log_path)
@@ -247,6 +258,24 @@ def test_pipeline_detects_successful_login_after_failures(tmp_path: Path) -> Non
     finding = result.successful_login_after_failures_findings[0]
     assert finding.username == "admin"
     assert finding.failure_count == 3
+
+
+def test_pipeline_detects_multiple_source_ips(tmp_path: Path) -> None:
+    log_path = tmp_path / "multiple-source-ips.log"
+    write_log(
+        log_path,
+        [
+            f"Aug 18 09:0{minute}:00 host sshd[10]: "
+            f"Failed password for admin from 192.0.2.{minute + 1} "
+            f"port {50000 + minute} ssh2"
+            for minute in range(3)
+        ],
+    )
+
+    result = create_analyzer().analyze(log_path)
+
+    assert len(result.multiple_source_ips_findings) == 1
+    assert result.multiple_source_ips_findings[0].distinct_source_ip_count == 3
 
 
 def test_reads_crlf_and_final_line_without_newline(tmp_path: Path) -> None:
@@ -302,5 +331,6 @@ def test_result_and_nested_collections_are_immutable(tmp_path: Path) -> None:
     assert isinstance(result.off_hours_findings, tuple)
     assert isinstance(result.password_spray_findings, tuple)
     assert isinstance(result.successful_login_after_failures_findings, tuple)
+    assert isinstance(result.multiple_source_ips_findings, tuple)
     with pytest.raises(FrozenInstanceError):
         result.total_lines = 2
