@@ -28,6 +28,7 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert error.value.code == 0
     output = capsys.readouterr().out
     assert "analyze-linux" in output
+    assert "analyze-windows" in output
 
 
 def test_analyze_linux_help_documents_required_and_configurable_options(

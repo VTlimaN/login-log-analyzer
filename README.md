@@ -10,7 +10,7 @@ O problema abordado é a dificuldade de analisar, de forma consistente, registro
 
 ## Estado atual
 
-O Milestone 9 adiciona análise programática de eventos Windows extraídos para um arquivo JSON. Linux possui fluxo completo com CLI; Windows agora possui ingestão JSON, normalização e execução dos três detectores, mas ainda não possui CLI nem coleta nativa do Event Log.
+O Milestone 10 adiciona o comando `analyze-windows` à interface de linha de comando. Linux e Windows agora possuem fluxos completos de arquivo até relatório no terminal, enquanto coleta nativa do Windows Event Log continua fora do escopo atual.
 
 ## Suporte atual
 
@@ -82,7 +82,7 @@ O `WindowsJsonFileAnalyzer` recebe um `Path`, um `WindowsAuthenticationParser` e
 
 Cada timestamp deve ser uma string ISO 8601 com timezone explícito. Event IDs inteiros diferentes de 4624 e 4625 são contabilizados como não suportados e não entram na análise de autenticação. Registros inválidos são reportados por posição e mensagem, sem incluir o objeto JSON bruto, e não impedem o processamento dos registros seguintes.
 
-JSON sintaticamente inválido e uma raiz diferente de array impedem a análise do documento. Falhas de filesystem e decoding também permanecem distintas dos erros individuais de registro. O JSON é somente um formato de intercâmbio para dados previamente extraídos; coleta nativa, XML e EVTX continuam sem suporte. Ainda não existe comando Windows na CLI.
+JSON sintaticamente inválido e uma raiz diferente de array impedem a análise do documento. Falhas de filesystem e decoding também permanecem distintas dos erros individuais de registro. O JSON é somente um formato de intercâmbio para dados previamente extraídos; coleta nativa, XML e EVTX continuam sem suporte.
 
 ## Tecnologias
 
@@ -118,17 +118,24 @@ python -m pytest
 
 ## Uso da linha de comando
 
-Com o ambiente virtual ativado, consulte a ajuda geral ou a ajuda do comando Linux:
+Com o ambiente virtual ativado, consulte a ajuda geral ou a ajuda específica de cada plataforma:
 
 ```powershell
 python -m login_log_analyzer --help
 python -m login_log_analyzer analyze-linux --help
+python -m login_log_analyzer analyze-windows --help
 ```
 
-O caminho do arquivo é posicional. As opções `--year` e `--timezone-offset` são obrigatórias porque o timestamp syslog tradicional não contém esse contexto:
+Para Linux, o caminho é posicional e `--year` e `--timezone-offset` são obrigatórios porque o timestamp syslog tradicional não contém esse contexto:
 
 ```powershell
 python -m login_log_analyzer analyze-linux samples/linux_auth.log --year 2026 --timezone-offset=-03:00
+```
+
+Para Windows, o caminho do JSON também é posicional, mas não há argumentos de ano ou timezone. Cada registro já precisa conter um timestamp ISO 8601 com offset explícito:
+
+```powershell
+python -m login_log_analyzer analyze-windows samples/windows_auth.json
 ```
 
 Offsets usam `+HH:MM` ou `-HH:MM`. Horários usam `HH:MM`, e weekdays usam os nomes `mon,tue,wed,thu,fri,sat,sun`. As configurações padrão são:
@@ -137,11 +144,13 @@ Offsets usam `+HH:MM` ou `-HH:MM`. Horários usam `HH:MM`, e weekdays usam os no
 - password spraying: 5 usernames distintos em 10 minutos;
 - agenda permitida: `mon,tue,wed,thu,fri`, das `08:00` até `18:00`, com fim exclusivo.
 
-Esses valores podem ser alterados com `--brute-force-threshold`, `--brute-force-window-minutes`, `--password-spray-threshold`, `--password-spray-window-minutes`, `--allowed-weekdays`, `--allowed-start` e `--allowed-end`.
+Esses valores são iguais nos dois comandos e podem ser alterados com `--brute-force-threshold`, `--brute-force-window-minutes`, `--password-spray-threshold`, `--password-spray-window-minutes`, `--allowed-weekdays`, `--allowed-start` e `--allowed-end`.
 
-A saída apresenta contagens gerais, erros de parsing sem reproduzir a linha bruta e seções detalhadas para cada tipo de finding. O código de saída é `0` quando a análise termina, mesmo que existam findings. Argumentos ou configurações inválidas e falhas operacionais, como arquivo inexistente, retornam código diferente de zero com mensagem em stderr.
+A saída apresenta contagens gerais e seções detalhadas para cada tipo de finding. Linux contabiliza linhas e erros de parsing; Windows contabiliza registros e erros de registro. Nenhuma das saídas reproduz o conteúdo bruto que falhou.
 
-Após a instalação editável, o mesmo comando também fica disponível como `login-log-analyzer`. A CLI atual analisa somente arquivos Linux com o subconjunto OpenSSH suportado. A análise Windows JSON está disponível apenas pela API Python; ainda não há coleta nativa nem comando Windows. Também não existem GUI, exportação de relatórios ou integração com SIEM.
+O código de saída é `0` quando a análise termina, mesmo que existam findings ou erros recuperáveis de registros. Falhas operacionais retornam `1`, incluindo arquivo inexistente, decoding inválido, JSON malformado ou raiz incompatível. Argumentos e configurações de detectores inválidos retornam `2`.
+
+Após a instalação editável, os mesmos subcomandos ficam disponíveis por `login-log-analyzer`. A entrada Linux continua limitada ao subconjunto OpenSSH suportado, e a entrada Windows continua sendo JSON previamente extraído. Não há coleta nativa do Event Log, leitura EVTX, GUI, exportação de relatórios ou integração com SIEM.
 
 ## Estrutura inicial
 

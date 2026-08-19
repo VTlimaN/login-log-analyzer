@@ -180,22 +180,43 @@ JSON é um formato de intercâmbio para eventos previamente extraídos, não um 
 ## Interface de linha de comando
 
 ```text
-CLI analyze-linux
-        |
-        v
-composição da configuração
-        |
-        v
-LinuxLogFileAnalyzer
-        |
-        +--> LinuxAuthenticationParser --> AuthenticationEvent[]
-        |                                      |
-        |                                      +--> detectores
-        |                                               |
-        v                                               v
-LinuxLogAnalysisResult --------------------------> formatação CLI
+CLI
+ |
+ +--> analyze-linux
+ |          |
+ |          v
+ |    LinuxLogFileAnalyzer --> LinuxAuthenticationParser
+ |                                      |
+ |                                      v
+ |                              AuthenticationEvent[]
+ |                                      |
+ |                                      v
+ |                  BruteForceDetector / OffHoursLoginDetector /
+ |                         PasswordSprayDetector
+ |                                      |
+ |                                      v
+ |                              LinuxLogAnalysisResult
+ |
+ +--> analyze-windows
+            |
+            v
+     WindowsJsonFileAnalyzer --> WindowsAuthenticationParser
+                                         |
+                                         v
+                                 AuthenticationEvent[]
+                                         |
+                                         v
+                     BruteForceDetector / OffHoursLoginDetector /
+                            PasswordSprayDetector
+                                         |
+                                         v
+                                WindowsJsonAnalysisResult
+
+resultados específicos --> formatação específica da CLI
 ```
 
-A CLI é uma camada fina de apresentação e composição. Ela valida a sintaxe dos argumentos, instancia o parser e os detectores com a configuração fornecida, chama o `LinuxLogFileAnalyzer` e formata o resultado estruturado. Não contém regras de parsing nem cálculos de detecção.
+A CLI é uma camada fina de apresentação e composição. Ela valida a sintaxe dos argumentos, instancia parsers e detectores com a configuração fornecida, chama o analisador correspondente e formata seu resultado estruturado. Não contém regras de parsing, conversão JSON ou cálculos de detecção.
 
-O parser continua responsável pela sintaxe da fonte, `AuthenticationEvent` pela normalização, os detectores pelas regras de segurança e a camada de análise pela orquestração. Essa separação permite adicionar futuras apresentações sem duplicar lógica. O comando atual cobre somente arquivos Linux; o pipeline Windows JSON ainda não possui apresentação em CLI.
+Os dois comandos compartilham a configuração dos detectores e a apresentação dos mesmos tipos de finding. Somente Linux exige ano e offset do log, pois o JSON Windows já carrega timestamps ISO 8601 com timezone em cada registro. Resumos e erros permanecem específicos: Linux fala em linhas e parsing; Windows fala em registros JSON.
+
+Os parsers continuam responsáveis pela sintaxe das fontes, `AuthenticationEvent` pela normalização, os detectores pelas regras de segurança e cada camada de análise pela orquestração. O mesmo `main()` atende à execução por módulo e ao console script, sem criar uma segunda interface ou mover lógica de domínio para a apresentação.
