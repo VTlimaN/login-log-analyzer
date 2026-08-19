@@ -9,6 +9,10 @@ from login_log_analyzer.account_lifecycle import AccountLifecycleEvent
 from login_log_analyzer.account_lockout import AccountLockoutEvent
 from login_log_analyzer.authentication import AuthenticationEvent
 from login_log_analyzer.brute_force import BruteForceDetector, BruteForceFinding
+from login_log_analyzer.brute_force_lockout import (
+    BruteForceAccountLockoutCorrelator,
+    BruteForceAccountLockoutFinding,
+)
 from login_log_analyzer.multiple_source_ips import (
     MultipleSourceIPsDetector,
     MultipleSourceIPsFinding,
@@ -93,6 +97,10 @@ class WindowsNativeAnalysisResult:
     multiple_source_ips_findings: tuple[MultipleSourceIPsFinding, ...]
     account_lockout_events: tuple[AccountLockoutEvent, ...]
     account_lifecycle_events: tuple[AccountLifecycleEvent, ...] = ()
+    brute_force_account_lockout_findings: tuple[
+        BruteForceAccountLockoutFinding,
+        ...,
+    ] = ()
 
     @property
     def record_error_count(self) -> int:
@@ -105,6 +113,10 @@ class WindowsNativeAnalysisResult:
     @property
     def account_lifecycle_count(self) -> int:
         return len(self.account_lifecycle_events)
+
+    @property
+    def brute_force_account_lockout_finding_count(self) -> int:
+        return len(self.brute_force_account_lockout_findings)
 
 
 class WindowsEventLogCollector:
@@ -214,6 +226,7 @@ class WindowsNativeEventAnalyzer:
         password_spray_detector: PasswordSprayDetector,
         successful_login_after_failures_detector: SuccessfulLoginAfterFailuresDetector,
         multiple_source_ips_detector: MultipleSourceIPsDetector,
+        brute_force_account_lockout_correlator: BruteForceAccountLockoutCorrelator,
     ) -> None:
         self._collector = collector
         self._windows_parser = windows_parser
@@ -226,6 +239,9 @@ class WindowsNativeEventAnalyzer:
             successful_login_after_failures_detector
         )
         self._multiple_source_ips_detector = multiple_source_ips_detector
+        self._brute_force_account_lockout_correlator = (
+            brute_force_account_lockout_correlator
+        )
 
     def analyze(
         self,
@@ -275,14 +291,16 @@ class WindowsNativeEventAnalyzer:
                 continue
 
         normalized_events = tuple(events)
+        brute_force_findings = tuple(
+            self._brute_force_detector.detect(normalized_events)
+        )
+        normalized_lockouts = tuple(account_lockout_events)
         return WindowsNativeAnalysisResult(
             collected_record_count=len(records),
             parsed_event_count=len(normalized_events),
             unsupported_record_count=unsupported_record_count,
             record_errors=tuple(record_errors),
-            brute_force_findings=tuple(
-                self._brute_force_detector.detect(normalized_events)
-            ),
+            brute_force_findings=brute_force_findings,
             off_hours_findings=tuple(
                 self._off_hours_detector.detect(normalized_events)
             ),
@@ -297,8 +315,14 @@ class WindowsNativeEventAnalyzer:
             multiple_source_ips_findings=tuple(
                 self._multiple_source_ips_detector.detect(normalized_events)
             ),
-            account_lockout_events=tuple(account_lockout_events),
+            account_lockout_events=normalized_lockouts,
             account_lifecycle_events=tuple(account_lifecycle_events),
+            brute_force_account_lockout_findings=(
+                self._brute_force_account_lockout_correlator.correlate(
+                    brute_force_findings,
+                    normalized_lockouts,
+                )
+            ),
         )
 
     def _convert_record(self, record: ElementTree.Element) -> dict[str, object]:

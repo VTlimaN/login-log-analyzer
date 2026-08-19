@@ -8,6 +8,9 @@ from pathlib import Path
 from login_log_analyzer.account_lifecycle import AccountLifecycleEvent
 from login_log_analyzer.account_lockout import AccountLockoutEvent
 from login_log_analyzer.brute_force import BruteForceFinding
+from login_log_analyzer.brute_force_lockout import (
+    BruteForceAccountLockoutFinding,
+)
 from login_log_analyzer.linux_file_analysis import LinuxLogAnalysisResult
 from login_log_analyzer.multiple_source_ips import MultipleSourceIPsFinding
 from login_log_analyzer.off_hours import OffHoursLoginFinding
@@ -36,6 +39,8 @@ CSV_COLUMNS = (
     "successful_login",
     "distinct_source_ip_count",
     "source_ips",
+    "lockout_timestamp",
+    "correlation_delay_seconds",
 )
 
 AnalysisResult = (
@@ -141,6 +146,10 @@ def _json_document(result: AnalysisResult) -> dict[str, object]:
         },
     }
     if isinstance(result, (WindowsJsonAnalysisResult, WindowsNativeAnalysisResult)):
+        document["brute_force_account_lockout"] = [
+            _brute_force_account_lockout_json(finding)
+            for finding in result.brute_force_account_lockout_findings
+        ]
         document["account_lockouts"] = [
             _account_lockout_json(event)
             for event in result.account_lockout_events
@@ -179,6 +188,9 @@ def _source_data(
                 "record_error_count": result.record_error_count,
                 "account_lockout_count": result.account_lockout_count,
                 "account_lifecycle_count": result.account_lifecycle_count,
+                "brute_force_account_lockout_count": (
+                    result.brute_force_account_lockout_finding_count
+                ),
             },
             [
                 {"record_number": error.record_number, "message": error.message}
@@ -195,6 +207,9 @@ def _source_data(
                 "record_error_count": result.record_error_count,
                 "account_lockout_count": result.account_lockout_count,
                 "account_lifecycle_count": result.account_lifecycle_count,
+                "brute_force_account_lockout_count": (
+                    result.brute_force_account_lockout_finding_count
+                ),
             },
             [
                 {"record_number": error.record_number, "message": error.message}
@@ -211,6 +226,22 @@ def _brute_force_json(finding: BruteForceFinding) -> dict[str, object]:
         "first_observed": finding.first_observed.isoformat(),
         "last_observed": finding.last_observed.isoformat(),
         "failure_count": finding.failure_count,
+    }
+
+
+def _brute_force_account_lockout_json(
+    finding: BruteForceAccountLockoutFinding,
+) -> dict[str, object]:
+    return {
+        "username": finding.username,
+        "source_ip": str(finding.source_ip),
+        "brute_force_first_failure": (
+            finding.brute_force_first_failure.isoformat()
+        ),
+        "brute_force_last_failure": finding.brute_force_last_failure.isoformat(),
+        "brute_force_failure_count": finding.brute_force_failure_count,
+        "lockout_timestamp": finding.lockout_timestamp.isoformat(),
+        "correlation_delay_seconds": finding.correlation_delay.total_seconds(),
     }
 
 
@@ -302,6 +333,11 @@ def _csv_rows(result: AnalysisResult) -> list[dict[str, object]]:
         _multiple_source_ips_csv(finding)
         for finding in result.multiple_source_ips_findings
     )
+    if isinstance(result, (WindowsJsonAnalysisResult, WindowsNativeAnalysisResult)):
+        rows.extend(
+            _brute_force_account_lockout_csv(finding)
+            for finding in result.brute_force_account_lockout_findings
+        )
     return rows
 
 
@@ -386,6 +422,27 @@ def _multiple_source_ips_csv(
             "last_observed": finding.last_observed.isoformat(),
             "distinct_source_ip_count": finding.distinct_source_ip_count,
             "source_ips": ";".join(str(source_ip) for source_ip in finding.source_ips),
+        }
+    )
+    return row
+
+
+def _brute_force_account_lockout_csv(
+    finding: BruteForceAccountLockoutFinding,
+) -> dict[str, object]:
+    row = _empty_csv_row()
+    row.update(
+        {
+            "finding_type": "brute_force_account_lockout",
+            "username": finding.username,
+            "source_ip": str(finding.source_ip),
+            "first_observed": finding.brute_force_first_failure.isoformat(),
+            "last_observed": finding.brute_force_last_failure.isoformat(),
+            "failure_count": finding.brute_force_failure_count,
+            "lockout_timestamp": finding.lockout_timestamp.isoformat(),
+            "correlation_delay_seconds": (
+                finding.correlation_delay.total_seconds()
+            ),
         }
     )
     return row

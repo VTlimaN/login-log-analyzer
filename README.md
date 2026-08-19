@@ -12,6 +12,7 @@ A versão declarada no pacote é `0.1.0`. O repositório está preparado como ca
 - pipelines de análise de arquivo com erros recuperáveis estruturados;
 - comandos de terminal para análise Linux, Windows JSON e Windows Security Event Log;
 - exportação opcional de relatórios em JSON e CSV;
+- correlação entre força bruta e bloqueio de conta Windows observado posteriormente;
 - suporte a IPv4, IPv6 e timestamps com fuso horário explícito.
 
 Os cinco detectores operam sobre `AuthenticationEvent`, sem depender da sintaxe original do Linux ou do Windows:
@@ -28,6 +29,8 @@ Separadamente dos findings heurísticos, o projeto mantém duas famílias de obs
 - **Ciclo de vida de conta:** Event IDs 4720 (criada), 4722 (habilitada), 4725 (desabilitada), 4726 (excluída) e 4767 (desbloqueada), normalizados como `AccountLifecycleEvent` com `AccountLifecycleAction` explícita.
 
 Essas observações registram transições reportadas pelo sistema operacional. Elas não são convertidas em falhas de autenticação, não entram nos detectores e não provam atividade maliciosa por si sós.
+
+Separadamente, o projeto produz um **finding correlacionado** quando um `BruteForceFinding` é seguido por um `AccountLockoutEvent` do mesmo username exato dentro da janela configurada. O candidato elegível mais recente é associado ao bloqueio, sem afirmar que a força bruta causou o evento.
 
 ## Arquitetura
 
@@ -116,6 +119,7 @@ O timestamp ISO 8601 já precisa incluir seu offset, portanto o comando não rec
 python -m login_log_analyzer analyze-windows .\samples\windows_auth.json
 python -m login_log_analyzer analyze-windows .\samples\windows_account_lockout.json
 python -m login_log_analyzer analyze-windows .\samples\windows_account_lifecycle.json
+python -m login_log_analyzer analyze-windows .\samples\windows_brute_force_lockout.json
 ```
 
 Esse caminho permanece útil para análise portátil ou offline de eventos previamente extraídos.
@@ -143,9 +147,11 @@ Os três comandos compartilham os seguintes defaults e opções de detecção:
 | Sucesso após falhas | 5 falhas em 5 minutos | `--success-after-failures-threshold`, `--success-after-failures-window-minutes` |
 | Múltiplos IPs contra uma conta | 5 IPs distintos em 10 minutos | `--multiple-source-ips-threshold`, `--multiple-source-ips-window-minutes` |
 
+Os comandos Windows também aceitam `--brute-force-lockout-window-minutes`. O default é 15 minutos e limita o intervalo inclusivo entre `BruteForceFinding.last_observed` e o bloqueio subsequente. Essa opção não existe no comando Linux.
+
 Weekdays usam `mon,tue,wed,thu,fri,sat,sun`; horários usam `HH:MM` em formato de 24 horas. O início do horário permitido é inclusivo e o fim é exclusivo. Consulte o `--help` do subcomando para a lista autoritativa de opções.
 
-O relatório mostra contagens de entrada, eventos normalizados, entradas não suportadas, erros recuperáveis e findings heurísticos. Nos comandos Windows, bloqueios e eventos de ciclo de vida aparecem em contagens e seções próprias, com conta alvo, ação e contexto disponível. Linhas ou objetos malformados não são reproduzidos no terminal.
+O relatório mostra contagens de entrada, eventos normalizados, entradas não suportadas, erros recuperáveis e findings heurísticos. Nos comandos Windows, bloqueios e eventos de ciclo de vida aparecem em contagens e seções próprias, enquanto correlações de força bruta seguidas por bloqueio aparecem como findings correlacionados. Linhas ou objetos malformados não são reproduzidos no terminal.
 
 Os códigos de saída são:
 
@@ -162,11 +168,11 @@ python -m login_log_analyzer analyze-linux .\samples\demo_linux_attack.log --yea
 python -m login_log_analyzer analyze-windows .\samples\demo_windows_attack.json --output-json .\windows-report.json --output-csv .\windows-findings.csv
 ```
 
-O JSON é o relatório estruturado completo: inclui resumo, erros recuperáveis, todas as categorias de findings e, para fontes Windows, as coleções `account_lockouts` e `account_lifecycle`. Ações de ciclo de vida usam os valores estáveis `created`, `enabled`, `disabled`, `deleted` e `unlocked`. O CSV permanece uma tabela plana exclusivamente de findings heurísticos; observações diretas não são transformadas artificialmente em linhas `finding_type`. Um CSV sem findings contém somente o cabeçalho.
+O JSON é o relatório estruturado completo: inclui resumo, erros recuperáveis, todas as categorias de findings e, para fontes Windows, as coleções `account_lockouts`, `account_lifecycle` e `brute_force_account_lockout`. Ações de ciclo de vida usam os valores estáveis `created`, `enabled`, `disabled`, `deleted` e `unlocked`. O CSV contém findings heurísticos e correlacionados; observações diretas não são transformadas artificialmente em linhas `finding_type`. Quando há correlação, as linhas `brute_force` e `brute_force_account_lockout` coexistem intencionalmente. Um CSV sem findings contém somente o cabeçalho.
 
 Por segurança, um destino existente é rejeitado. `--overwrite` permite sua substituição explícita. Os destinos JSON e CSV devem ser diferentes e seus diretórios-pai precisam existir.
 
-O contrato usa `report_version` igual a `1`. Os identificadores de origem são `linux_file`, `windows_json` e `windows_native`; os tipos de finding são `brute_force`, `off_hours`, `password_spray`, `successful_login_after_failures` e `multiple_source_ips`. As coleções de observações Windows são extensões JSON aditivas e não alteram esses identificadores nem a semântica do CSV. Timestamps permanecem em ISO 8601 com seus offsets; contextos opcionais ausentes são `null`.
+O contrato usa `report_version` igual a `1`. Os identificadores de origem são `linux_file`, `windows_json` e `windows_native`; os tipos heurísticos são `brute_force`, `off_hours`, `password_spray`, `successful_login_after_failures` e `multiple_source_ips`, e o tipo correlacionado é `brute_force_account_lockout`. A coleção correlacionada e as colunas CSV `lockout_timestamp` e `correlation_delay_seconds` são extensões aditivas. Timestamps permanecem em ISO 8601 com seus offsets; contextos opcionais ausentes são `null`.
 
 ## Demonstração reproduzível
 
@@ -176,6 +182,7 @@ As amostras de ataque são sintéticas e foram construídas para acionar os trê
 python -m login_log_analyzer analyze-linux .\samples\demo_linux_attack.log --year 2026 --timezone-offset=-03:00
 python -m login_log_analyzer analyze-windows .\samples\demo_windows_attack.json
 python -m login_log_analyzer analyze-windows .\samples\windows_account_lifecycle.json
+python -m login_log_analyzer analyze-windows .\samples\windows_brute_force_lockout.json
 ```
 
 Em cada comando, o resumo esperado contém 10 eventos de autenticação e um achado em cada categoria:

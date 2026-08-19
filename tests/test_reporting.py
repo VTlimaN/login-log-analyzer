@@ -1,6 +1,6 @@
 import csv
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from ipaddress import ip_address
 from pathlib import Path
 
@@ -13,6 +13,7 @@ from login_log_analyzer.account_lifecycle import (
 from login_log_analyzer.account_lockout import AccountLockoutEvent
 from login_log_analyzer.authentication import AuthenticationPlatform
 from login_log_analyzer.brute_force import BruteForceFinding
+from login_log_analyzer.brute_force_lockout import BruteForceAccountLockoutFinding
 from login_log_analyzer.linux_file_analysis import (
     LinuxLogAnalysisResult,
     LinuxLogParseError,
@@ -79,6 +80,22 @@ def account_lifecycle_events() -> tuple[AccountLifecycleEvent, ...]:
             username="NoContextUser",
             action=AccountLifecycleAction.UNLOCKED,
             platform=AuthenticationPlatform.WINDOWS,
+        ),
+    )
+
+
+def brute_force_lockout_findings() -> tuple[BruteForceAccountLockoutFinding, ...]:
+    return (
+        BruteForceAccountLockoutFinding(
+            username="Admin, Produção",
+            source_ip=ip_address("2001:db8::90"),
+            brute_force_first_failure=FIRST,
+            brute_force_last_failure=LAST,
+            brute_force_failure_count=5,
+            lockout_timestamp=datetime.fromisoformat(
+                "2026-08-18T09:10:00-03:00"
+            ),
+            correlation_delay=timedelta(minutes=6),
         ),
     )
 
@@ -180,6 +197,9 @@ def linux_result(*, include_findings: bool = True) -> LinuxLogAnalysisResult:
                 multiple_source_ips_findings=findings()[4],
                 account_lockout_events=account_lockouts(),
                 account_lifecycle_events=account_lifecycle_events(),
+                brute_force_account_lockout_findings=(
+                    brute_force_lockout_findings()
+                ),
             ),
             "windows_json",
             "total_records",
@@ -198,6 +218,9 @@ def linux_result(*, include_findings: bool = True) -> LinuxLogAnalysisResult:
                 multiple_source_ips_findings=findings()[4],
                 account_lockout_events=account_lockouts(),
                 account_lifecycle_events=account_lifecycle_events(),
+                brute_force_account_lockout_findings=(
+                    brute_force_lockout_findings()
+                ),
             ),
             "windows_native",
             "collected_record_count",
@@ -260,6 +283,8 @@ def test_exports_complete_json_contract(
         assert "account_lockouts" not in document
         assert "account_lifecycle_count" not in document["summary"]
         assert "account_lifecycle" not in document
+        assert "brute_force_account_lockout_count" not in document["summary"]
+        assert "brute_force_account_lockout" not in document
     else:
         assert document["summary"]["account_lockout_count"] == 2
         assert document["account_lockouts"] == [
@@ -302,6 +327,18 @@ def test_exports_complete_json_contract(
                 "subject_domain": None,
                 "recording_computer": None,
             },
+        ]
+        assert document["summary"]["brute_force_account_lockout_count"] == 1
+        assert document["brute_force_account_lockout"] == [
+            {
+                "username": "Admin, Produção",
+                "source_ip": "2001:db8::90",
+                "brute_force_first_failure": "2026-08-18T09:00:00-03:00",
+                "brute_force_last_failure": "2026-08-18T09:04:00-03:00",
+                "brute_force_failure_count": 5,
+                "lockout_timestamp": "2026-08-18T09:10:00-03:00",
+                "correlation_delay_seconds": 360.0,
+            }
         ]
     assert "Produção" in destination.read_text(encoding="utf-8")
     assert destination.read_bytes().endswith(b"\n")
@@ -370,6 +407,40 @@ def test_csv_excludes_direct_windows_observations(tmp_path: Path) -> None:
     with destination.open(encoding="utf-8", newline="") as report:
         rows = list(csv.reader(report))
     assert rows == [list(CSV_COLUMNS)]
+
+
+def test_csv_includes_underlying_and_correlated_findings(tmp_path: Path) -> None:
+    destination = tmp_path / "correlated.csv"
+    result = WindowsJsonAnalysisResult(
+        total_records=6,
+        parsed_event_count=5,
+        unsupported_record_count=0,
+        record_errors=(),
+        brute_force_findings=findings()[0],
+        off_hours_findings=(),
+        password_spray_findings=(),
+        successful_login_after_failures_findings=(),
+        multiple_source_ips_findings=(),
+        account_lockout_events=account_lockouts()[:1],
+        brute_force_account_lockout_findings=brute_force_lockout_findings(),
+    )
+
+    export_csv_report(result, destination)
+
+    with destination.open(encoding="utf-8", newline="") as report:
+        rows = list(csv.DictReader(report))
+    assert [row["finding_type"] for row in rows] == [
+        "brute_force",
+        "brute_force_account_lockout",
+    ]
+    correlated = rows[1]
+    assert correlated["username"] == "Admin, Produção"
+    assert correlated["source_ip"] == "2001:db8::90"
+    assert correlated["first_observed"] == "2026-08-18T09:00:00-03:00"
+    assert correlated["last_observed"] == "2026-08-18T09:04:00-03:00"
+    assert correlated["failure_count"] == "5"
+    assert correlated["lockout_timestamp"] == "2026-08-18T09:10:00-03:00"
+    assert correlated["correlation_delay_seconds"] == "360.0"
 
 
 def test_rejects_existing_destination_and_allows_explicit_overwrite(tmp_path: Path) -> None:

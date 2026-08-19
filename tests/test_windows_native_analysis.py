@@ -12,6 +12,7 @@ from login_log_analyzer.authentication import (
     AuthenticationPlatform,
 )
 from login_log_analyzer.brute_force import BruteForceDetector
+from login_log_analyzer.brute_force_lockout import BruteForceAccountLockoutCorrelator
 from login_log_analyzer.multiple_source_ips import MultipleSourceIPsDetector
 from login_log_analyzer.off_hours import OffHoursLoginDetector
 from login_log_analyzer.password_spray import PasswordSprayDetector
@@ -135,12 +136,17 @@ def create_recording_analyzer(
         password_spray_detector=RecordingDetector(),
         successful_login_after_failures_detector=RecordingDetector(),
         multiple_source_ips_detector=RecordingDetector(),
+        brute_force_account_lockout_correlator=(
+            BruteForceAccountLockoutCorrelator(window=timedelta(minutes=15))
+        ),
     )
     return analyzer, collector, detector
 
 
 def create_detection_analyzer(
     records: tuple[ElementTree.Element, ...],
+    *,
+    correlation_window: timedelta = timedelta(minutes=15),
 ) -> WindowsNativeEventAnalyzer:
     return WindowsNativeEventAnalyzer(
         collector=StaticCollector(records),
@@ -169,6 +175,9 @@ def create_detection_analyzer(
         multiple_source_ips_detector=MultipleSourceIPsDetector(
             source_ip_threshold=3,
             window=timedelta(minutes=5),
+        ),
+        brute_force_account_lockout_correlator=(
+            BruteForceAccountLockoutCorrelator(window=correlation_window)
         ),
     )
 
@@ -672,3 +681,60 @@ def test_native_pipeline_detects_multiple_source_ips() -> None:
 
     assert len(result.multiple_source_ips_findings) == 1
     assert result.multiple_source_ips_findings[0].distinct_source_ip_count == 3
+
+
+def test_native_pipeline_correlates_brute_force_with_account_lockout() -> None:
+    records = tuple(
+        create_record(
+            event_id=4625,
+            timestamp=f"2026-08-19T12:0{minute}:00Z",
+            username="alice",
+            source_ip="2001:db8::44",
+        )
+        for minute in range(3)
+    ) + (
+        create_record(
+            event_id=4740,
+            timestamp="2026-08-19T12:10:00Z",
+            username="alice",
+            source_ip=None,
+        ),
+    )
+
+    result = create_detection_analyzer(records).analyze()
+
+    assert len(result.brute_force_findings) == 1
+    assert result.account_lockout_count == 1
+    assert result.brute_force_account_lockout_finding_count == 1
+    assert result.brute_force_account_lockout_findings[0].source_ip == ip_address(
+        "2001:db8::44"
+    )
+    assert result.account_lifecycle_events == ()
+
+
+def test_native_pipeline_does_not_correlate_outside_custom_window() -> None:
+    records = tuple(
+        create_record(
+            event_id=4625,
+            timestamp=f"2026-08-19T12:0{minute}:00Z",
+            username="alice",
+            source_ip="192.0.2.44",
+        )
+        for minute in range(3)
+    ) + (
+        create_record(
+            event_id=4740,
+            timestamp="2026-08-19T12:10:00Z",
+            username="alice",
+            source_ip=None,
+        ),
+    )
+
+    result = create_detection_analyzer(
+        records,
+        correlation_window=timedelta(minutes=5),
+    ).analyze()
+
+    assert len(result.brute_force_findings) == 1
+    assert result.account_lockout_count == 1
+    assert result.brute_force_account_lockout_findings == ()

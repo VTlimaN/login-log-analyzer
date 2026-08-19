@@ -71,3 +71,23 @@ def test_account_lifecycle_sample_produces_direct_observations(
     assert "DemoLifecycleUser" in output
     for action in ("criada", "habilitada", "desabilitada", "excluída", "desbloqueada"):
         assert action in output
+
+
+def test_brute_force_lockout_sample_produces_three_signal_categories(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    arguments = [
+        "analyze-windows",
+        str(PROJECT_ROOT / "samples" / "windows_brute_force_lockout.json"),
+    ]
+
+    assert main(arguments) == 0
+
+    output = capsys.readouterr().out
+    assert "Achados de força bruta: 1" in output
+    assert "Bloqueios de conta: 1" in output
+    assert "Correlações de força bruta + bloqueio: 1" in output
+    assert "Achados de password spraying: 0" in output
+    assert "Achados fora do horário: 0" in output
+    assert "Achados de sucesso após falhas: 0" in output
+    assert "Achados de múltiplos IPs de origem: 0" in output

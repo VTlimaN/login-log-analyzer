@@ -13,6 +13,10 @@ from login_log_analyzer.account_lifecycle import (
 )
 from login_log_analyzer.account_lockout import AccountLockoutEvent
 from login_log_analyzer.brute_force import BruteForceDetector, BruteForceFinding
+from login_log_analyzer.brute_force_lockout import (
+    BruteForceAccountLockoutCorrelator,
+    BruteForceAccountLockoutFinding,
+)
 from login_log_analyzer.linux_authentication import LinuxAuthenticationParser
 from login_log_analyzer.linux_file_analysis import (
     LinuxLogAnalysisResult,
@@ -63,6 +67,7 @@ DEFAULT_SUCCESS_AFTER_FAILURES_THRESHOLD = 5
 DEFAULT_SUCCESS_AFTER_FAILURES_WINDOW_MINUTES = 5
 DEFAULT_MULTIPLE_SOURCE_IPS_THRESHOLD = 5
 DEFAULT_MULTIPLE_SOURCE_IPS_WINDOW_MINUTES = 10
+DEFAULT_BRUTE_FORCE_LOCKOUT_WINDOW_MINUTES = 15
 DEFAULT_ALLOWED_WEEKDAYS = "mon,tue,wed,thu,fri"
 DEFAULT_ALLOWED_START = "08:00"
 DEFAULT_ALLOWED_END = "18:00"
@@ -239,6 +244,17 @@ def add_report_arguments(command_parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_brute_force_lockout_argument(
+    command_parser: argparse.ArgumentParser,
+) -> None:
+    command_parser.add_argument(
+        "--brute-force-lockout-window-minutes",
+        type=parse_positive_integer,
+        default=DEFAULT_BRUTE_FORCE_LOCKOUT_WINDOW_MINUTES,
+        help="janela entre força bruta e bloqueio de conta em minutos",
+    )
+
+
 def create_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="login-log-analyzer",
@@ -287,6 +303,7 @@ def create_argument_parser() -> argparse.ArgumentParser:
         help="arquivo JSON Windows em UTF-8",
     )
     add_detector_arguments(windows_parser)
+    add_brute_force_lockout_argument(windows_parser)
     add_report_arguments(windows_parser)
 
     windows_native_parser = commands.add_parser(
@@ -305,6 +322,7 @@ def create_argument_parser() -> argparse.ArgumentParser:
         help="quantidade máxima de eventos Windows coletados",
     )
     add_detector_arguments(windows_native_parser)
+    add_brute_force_lockout_argument(windows_native_parser)
     add_report_arguments(windows_native_parser)
     return parser
 
@@ -387,6 +405,13 @@ def create_windows_analyzer(arguments: argparse.Namespace) -> WindowsJsonFileAna
             successful_login_after_failures_detector
         ),
         multiple_source_ips_detector=multiple_source_ips_detector,
+        brute_force_account_lockout_correlator=(
+            BruteForceAccountLockoutCorrelator(
+                window=timedelta(
+                    minutes=arguments.brute_force_lockout_window_minutes
+                )
+            )
+        ),
     )
 
 
@@ -412,6 +437,13 @@ def create_windows_native_analyzer(
             successful_login_after_failures_detector
         ),
         multiple_source_ips_detector=multiple_source_ips_detector,
+        brute_force_account_lockout_correlator=(
+            BruteForceAccountLockoutCorrelator(
+                window=timedelta(
+                    minutes=arguments.brute_force_lockout_window_minutes
+                )
+            )
+        ),
     )
 
 
@@ -527,6 +559,26 @@ def render_account_lockout_events(
         )
 
 
+def render_brute_force_account_lockout_findings(
+    findings: tuple[BruteForceAccountLockoutFinding, ...],
+    output: TextIO,
+) -> None:
+    if not findings:
+        return
+
+    print("\nCorrelações de força bruta seguidas por bloqueio", file=output)
+    for finding in findings:
+        print(
+            f"  {finding.username} | {finding.source_ip} | "
+            f"força bruta: {finding.brute_force_first_failure.isoformat()} -> "
+            f"{finding.brute_force_last_failure.isoformat()} | "
+            f"falhas: {finding.brute_force_failure_count} | "
+            f"bloqueio: {finding.lockout_timestamp.isoformat()} | "
+            f"atraso: {finding.correlation_delay.total_seconds():g}s",
+            file=output,
+        )
+
+
 def render_account_lifecycle_events(
     events: tuple[AccountLifecycleEvent, ...],
     output: TextIO,
@@ -635,6 +687,12 @@ def render_windows_result(
         file=output,
     )
 
+    print(
+        "  Correlações de força bruta + bloqueio: "
+        f"{result.brute_force_account_lockout_finding_count}",
+        file=output,
+    )
+
     if result.record_errors:
         print("\nErros de registro", file=output)
         for error in result.record_errors:
@@ -649,6 +707,10 @@ def render_windows_result(
     )
     render_multiple_source_ips_findings(result.multiple_source_ips_findings, output)
     render_account_lockout_events(result.account_lockout_events, output)
+    render_brute_force_account_lockout_findings(
+        result.brute_force_account_lockout_findings,
+        output,
+    )
     render_account_lifecycle_events(result.account_lifecycle_events, output)
 
 
@@ -686,6 +748,12 @@ def render_windows_native_result(
         file=output,
     )
 
+    print(
+        "  Correlações de força bruta + bloqueio: "
+        f"{result.brute_force_account_lockout_finding_count}",
+        file=output,
+    )
+
     if result.record_errors:
         print("\nErros de registro", file=output)
         for error in result.record_errors:
@@ -700,6 +768,10 @@ def render_windows_native_result(
     )
     render_multiple_source_ips_findings(result.multiple_source_ips_findings, output)
     render_account_lockout_events(result.account_lockout_events, output)
+    render_brute_force_account_lockout_findings(
+        result.brute_force_account_lockout_findings,
+        output,
+    )
     render_account_lifecycle_events(result.account_lifecycle_events, output)
 
 

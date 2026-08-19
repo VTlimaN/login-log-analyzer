@@ -1,0 +1,40 @@
+[
+  {
+    "event_id": 4625,
+    "timestamp": "2026-08-19T12:00:00+00:00",
+    "username": "demo-lockout-user",
+    "source_ip": "192.0.2.90"
+  },
+  {
+    "event_id": 4625,
+    "timestamp": "2026-08-19T12:01:00+00:00",
+    "username": "demo-lockout-user",
+    "source_ip": "192.0.2.90"
+  },
+  {
+    "event_id": 4625,
+    "timestamp": "2026-08-19T12:02:00+00:00",
+    "username": "demo-lockout-user",
+    "source_ip": "192.0.2.90"
+  },
+  {
+    "event_id": 4625,
+    "timestamp": "2026-08-19T12:03:00+00:00",
+    "username": "demo-lockout-user",
+    "source_ip": "192.0.2.90"
+  },
+  {
+    "event_id": 4625,
+    "timestamp": "2026-08-19T12:04:00+00:00",
+    "username": "demo-lockout-user",
+    "source_ip": "192.0.2.90"
+  },
+  {
+    "event_id": 4740,
+    "timestamp": "2026-08-19T12:10:00+00:00",
+    "username": "demo-lockout-user",
+    "target_domain": "DEMO",
+    "caller_computer": "DEMO-WS-090",
+    "recording_computer": "DEMO-DC-01.example.invalid"
+  }
+]

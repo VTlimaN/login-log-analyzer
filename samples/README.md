@@ -8,6 +8,7 @@ Todos os arquivos deste diretório são sintéticos e existem somente para estud
 | `windows_auth.json` | Exemplo básico do formato de intercâmbio Windows, incluindo um Event ID não suportado. |
 | `windows_account_lockout.json` | Observação sintética de bloqueio de conta Windows Event ID 4740. |
 | `windows_account_lifecycle.json` | Observações sintéticas de criação, habilitação, desabilitação, exclusão e desbloqueio de conta Windows. |
+| `windows_brute_force_lockout.json` | Demonstra uma detecção de força bruta, um bloqueio observado e a correlação temporal entre ambos. |
 | `demo_linux_attack.log` | Demonstra força bruta, password spraying e login fora do horário com os defaults da CLI. |
 | `demo_windows_attack.json` | Demonstra as mesmas três detecções pelo pipeline Windows JSON. |
 
