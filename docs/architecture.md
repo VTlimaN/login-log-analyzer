@@ -5,19 +5,18 @@ O projeto separa ingestão, normalização, detecção, orquestração e apresen
 ## Visão geral
 
 ```text
-CLI analyze-linux   -> LinuxLogFileAnalyzer   -> LinuxAuthenticationParser ----\
-                                                                              \
-                                                                               > AuthenticationEvent[]
-                                                                              /             |
-CLI analyze-windows -> WindowsJsonFileAnalyzer -> WindowsAuthenticationParser /              +-> BruteForceDetector
-                                                                                            +-> OffHoursLoginDetector
-                                                                                            +-> PasswordSprayDetector
-                                                                                                    |
-                                                                                                    v
-                                                                                         resultado estruturado
-                                                                                                    |
-                                                                                                    v
-                                                                                            relatório da CLI
+CLI analyze-linux          -> LinuxLogFileAnalyzer ------> LinuxAuthenticationParser ----\
+CLI analyze-windows        -> WindowsJsonFileAnalyzer ---> WindowsAuthenticationParser ----> AuthenticationEvent[]
+CLI analyze-windows-native -> WindowsNativeEventAnalyzer -> WindowsAuthenticationParser --/             |
+                                                                                                         +-> BruteForceDetector
+                                                                                                         +-> OffHoursLoginDetector
+                                                                                                         +-> PasswordSprayDetector
+                                                                                                                 |
+                                                                                                                 v
+                                                                                                      resultado estruturado
+                                                                                                                 |
+                                                                                                                 v
+                                                                                                         relatório da CLI
 ```
 
 As responsabilidades são:
@@ -52,12 +51,24 @@ O timestamp syslog não contém ano nem timezone, então o chamador fornece esse
 
 ## Ingestão Windows
 
-`WindowsJsonFileAnalyzer` lê em UTF-8 um array JSON de eventos previamente extraídos. Cada timestamp é convertido de ISO 8601 com offset explícito antes de chegar ao `WindowsAuthenticationParser`, que aceita:
+O Windows possui dois caminhos independentes que convergem no mesmo `WindowsAuthenticationParser`.
+
+### Windows JSON
+
+`WindowsJsonFileAnalyzer` lê em UTF-8 um array JSON de eventos previamente extraídos. Cada timestamp é convertido de ISO 8601 com offset explícito antes de chegar ao parser, que aceita:
 
 - Event ID 4624 como sucesso;
 - Event ID 4625 como falha.
 
-Event IDs inteiros diferentes são contabilizados como não suportados. Registros inválidos geram `WindowsJsonRecordError` e os registros seguintes continuam sendo processados. JSON sintaticamente inválido ou com raiz diferente de array impede a análise do documento. O JSON é um formato de intercâmbio; não existe coleta nativa do Windows Event Log nem leitura de EVTX.
+Event IDs inteiros diferentes são contabilizados como não suportados. Registros inválidos geram `WindowsJsonRecordError` e os registros seguintes continuam sendo processados. JSON sintaticamente inválido ou com raiz diferente de array impede a análise do documento. O JSON permanece como formato de intercâmbio para análise portátil ou offline.
+
+### Windows Security Event Log nativo
+
+`WindowsEventLogCollector` executa `wevtutil` sem shell e consulta somente o log `Security`, usando XPath limitado aos Event IDs 4624 e 4625. A saída XML estruturada fornece `EventID`, `TimeCreated SystemTime`, `TargetUserName` e `IpAddress`. O limite padrão de coleta é 100 eventos e permanece configurável.
+
+`WindowsNativeEventAnalyzer` converte cada elemento XML para o mapeamento já aceito pelo `WindowsAuthenticationParser`. Assim, mapeamento de sucesso/falha, validação de username/IP e plataforma continuam centralizados no parser existente. Registros individuais inválidos são contabilizados sem armazenar o XML bruto; indisponibilidade do coletor, plataforma incompatível, falha da query e documento XML estruturalmente inválido são erros operacionais distintos.
+
+Esse caminho é somente leitura, local e exclusivo do Windows. Ele não eleva privilégios, modifica políticas, limpa logs, lê EVTX nem coleta eventos remotos.
 
 ## Detecção
 
@@ -83,4 +94,4 @@ Falhas de filesystem e decoding não são confundidas com registros malformados.
 
 ## Limites arquiteturais
 
-A aplicação não implementa coleta nativa do Windows, EVTX, persistência, exportação de relatório ou integração com SIEM. Os detectores mantêm semânticas explícitas e independentes; não há framework genérico de plugins ou estado persistente de incidentes. Extensões do modelo e dos fluxos devem ser justificadas por requisitos concretos.
+A aplicação não implementa EVTX, coleta Windows remota, persistência, exportação de relatório ou integração com SIEM. Os detectores mantêm semânticas explícitas e independentes; não há framework genérico de plugins ou estado persistente de incidentes. Extensões do modelo e dos fluxos devem ser justificadas por requisitos concretos.

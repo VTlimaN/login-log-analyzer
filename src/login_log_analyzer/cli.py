@@ -24,6 +24,13 @@ from login_log_analyzer.windows_json_analysis import (
     WindowsJsonFileAnalyzer,
     WindowsJsonFormatError,
 )
+from login_log_analyzer.windows_native_analysis import (
+    DEFAULT_WINDOWS_NATIVE_EVENT_LIMIT,
+    WindowsEventLogCollector,
+    WindowsNativeAnalysisResult,
+    WindowsNativeCollectionError,
+    WindowsNativeEventAnalyzer,
+)
 
 
 DEFAULT_BRUTE_FORCE_THRESHOLD = 5
@@ -93,6 +100,20 @@ def parse_time(value: str) -> time:
     if hours > 23 or minutes > 59:
         raise argparse.ArgumentTypeError("o horário deve estar entre 00:00 e 23:59")
     return time(hours, minutes)
+
+
+def parse_positive_integer(value: str) -> int:
+    try:
+        parsed_value = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "o valor deve ser um número inteiro positivo"
+        ) from error
+    if parsed_value < 1:
+        raise argparse.ArgumentTypeError(
+            "o valor deve ser um número inteiro positivo"
+        )
+    return parsed_value
 
 
 def add_detector_arguments(command_parser: argparse.ArgumentParser) -> None:
@@ -192,6 +213,22 @@ def create_argument_parser() -> argparse.ArgumentParser:
         help="arquivo JSON Windows em UTF-8",
     )
     add_detector_arguments(windows_parser)
+
+    windows_native_parser = commands.add_parser(
+        "analyze-windows-native",
+        help="analisa o Windows Security Event Log local",
+        description=(
+            "Consulta eventos 4624 e 4625 no Windows Security Event Log local."
+        ),
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    windows_native_parser.add_argument(
+        "--max-events",
+        type=parse_positive_integer,
+        default=DEFAULT_WINDOWS_NATIVE_EVENT_LIMIT,
+        help="quantidade máxima de eventos Windows coletados",
+    )
+    add_detector_arguments(windows_native_parser)
     return parser
 
 
@@ -235,6 +272,21 @@ def create_windows_analyzer(arguments: argparse.Namespace) -> WindowsJsonFileAna
         create_detectors(arguments)
     )
     return WindowsJsonFileAnalyzer(
+        windows_parser=WindowsAuthenticationParser(),
+        brute_force_detector=brute_force_detector,
+        off_hours_detector=off_hours_detector,
+        password_spray_detector=password_spray_detector,
+    )
+
+
+def create_windows_native_analyzer(
+    arguments: argparse.Namespace,
+) -> WindowsNativeEventAnalyzer:
+    brute_force_detector, off_hours_detector, password_spray_detector = (
+        create_detectors(arguments)
+    )
+    return WindowsNativeEventAnalyzer(
+        collector=WindowsEventLogCollector(),
         windows_parser=WindowsAuthenticationParser(),
         brute_force_detector=brute_force_detector,
         off_hours_detector=off_hours_detector,
@@ -354,6 +406,35 @@ def render_windows_result(
     render_password_spray_findings(result.password_spray_findings, output)
 
 
+def render_windows_native_result(
+    result: WindowsNativeAnalysisResult,
+    output: TextIO,
+) -> None:
+    print("Resumo da coleta nativa Windows", file=output)
+    print(f"  Registros coletados: {result.collected_record_count}", file=output)
+    print(f"  Eventos de autenticação: {result.parsed_event_count}", file=output)
+    print(
+        f"  Registros não suportados: {result.unsupported_record_count}",
+        file=output,
+    )
+    print(f"  Erros de registro: {result.record_error_count}", file=output)
+    print(f"  Achados de força bruta: {len(result.brute_force_findings)}", file=output)
+    print(f"  Achados fora do horário: {len(result.off_hours_findings)}", file=output)
+    print(
+        f"  Achados de password spraying: {len(result.password_spray_findings)}",
+        file=output,
+    )
+
+    if result.record_errors:
+        print("\nErros de registro", file=output)
+        for error in result.record_errors:
+            print(f"  Registro {error.record_number}: {error.message}", file=output)
+
+    render_brute_force_findings(result.brute_force_findings, output)
+    render_off_hours_findings(result.off_hours_findings, output)
+    render_password_spray_findings(result.password_spray_findings, output)
+
+
 def run_analyze_linux(
     arguments: argparse.Namespace,
     output: TextIO,
@@ -401,6 +482,27 @@ def run_analyze_windows(
     return 0
 
 
+def run_analyze_windows_native(
+    arguments: argparse.Namespace,
+    output: TextIO,
+    error_output: TextIO,
+) -> int:
+    try:
+        analyzer = create_windows_native_analyzer(arguments)
+    except (TypeError, ValueError) as error:
+        print(f"Erro de configuração: {error}", file=error_output)
+        return 2
+
+    try:
+        result = analyzer.analyze(arguments.max_events)
+    except WindowsNativeCollectionError as error:
+        print(f"Erro na coleta nativa Windows: {error}", file=error_output)
+        return 1
+
+    render_windows_native_result(result, output)
+    return 0
+
+
 def normalize_timezone_offset_arguments(arguments: Sequence[str]) -> list[str]:
     normalized_arguments: list[str] = []
     argument_index = 0
@@ -432,5 +534,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
         return run_analyze_linux(parsed_arguments, sys.stdout, sys.stderr)
     if parsed_arguments.command == "analyze-windows":
         return run_analyze_windows(parsed_arguments, sys.stdout, sys.stderr)
+    if parsed_arguments.command == "analyze-windows-native":
+        return run_analyze_windows_native(
+            parsed_arguments,
+            sys.stdout,
+            sys.stderr,
+        )
     parser.error("comando não suportado")
     return 2

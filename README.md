@@ -7,10 +7,10 @@ A versão declarada no pacote é `0.1.0`. O repositório está preparado como ca
 ## Capacidades atuais
 
 - parsing de autenticação por senha do OpenSSH em logs Linux tradicionais;
-- normalização dos Windows Security Event IDs 4624 e 4625 a partir de JSON estruturado;
+- normalização dos Windows Security Event IDs 4624 e 4625 a partir de JSON estruturado ou coleta nativa local;
 - detecção de força bruta, password spraying e login fora do horário;
 - pipelines de análise de arquivo com erros recuperáveis estruturados;
-- comandos de terminal para análise Linux e Windows;
+- comandos de terminal para análise Linux, Windows JSON e Windows Security Event Log;
 - suporte a IPv4, IPv6 e timestamps com fuso horário explícito.
 
 Os três detectores operam sobre `AuthenticationEvent`, sem depender da sintaxe original do Linux ou do Windows:
@@ -22,11 +22,9 @@ Os três detectores operam sobre `AuthenticationEvent`, sem depender da sintaxe 
 ## Arquitetura
 
 ```text
-arquivo Linux ----> parser OpenSSH ----\
-                                      \
-                                       > AuthenticationEvent -> detectores -> resultado
-                                      /
-arquivo Windows JSON -> conversão -> parser Windows
+arquivo Linux --------> parser OpenSSH --------\
+arquivo Windows JSON -> conversão --------------> parser Windows -> AuthenticationEvent -> detectores -> resultado
+Windows Security Log -> coletor XML wevtutil ---/
 ```
 
 Os parsers traduzem formatos específicos, o evento normalizado fornece uma representação comum, os detectores contêm as regras de segurança e os analisadores de arquivo coordenam o fluxo. A CLI apenas recebe configuração, compõe esses componentes e apresenta o resultado.
@@ -71,6 +69,7 @@ A mesma interface pode ser executada pelo módulo Python ou pelo console script 
 python -m login_log_analyzer --help
 python -m login_log_analyzer analyze-linux --help
 python -m login_log_analyzer analyze-windows --help
+python -m login_log_analyzer analyze-windows-native --help
 login-log-analyzer --help
 ```
 
@@ -84,7 +83,7 @@ python -m login_log_analyzer analyze-linux .\samples\linux_auth.log --year 2026 
 
 O offset aceita o formato `+HH:MM` ou `-HH:MM`. Usar `--timezone-offset=-03:00` evita que o valor negativo seja interpretado como outra opção pelo shell ou pelo parser de argumentos.
 
-### Windows
+### Windows JSON
 
 O comando Windows recebe um array JSON em UTF-8. Cada registro deve conter `event_id`, `timestamp`, `username` e, opcionalmente, `source_ip`:
 
@@ -105,9 +104,22 @@ O timestamp ISO 8601 já precisa incluir seu offset, portanto o comando não rec
 python -m login_log_analyzer analyze-windows .\samples\windows_auth.json
 ```
 
+Esse caminho permanece útil para análise portátil ou offline de eventos previamente extraídos.
+
+### Windows Security Event Log nativo
+
+Em Windows, o comando nativo consulta diretamente o log `Security` local por meio do `wevtutil`. A consulta é somente leitura, solicita XML estruturado e limita os resultados aos Event IDs 4624 e 4625:
+
+```powershell
+python -m login_log_analyzer analyze-windows-native
+python -m login_log_analyzer analyze-windows-native --max-events 250
+```
+
+O limite padrão é de 100 eventos e pode ser alterado com `--max-events`. A conta que executa o comando precisa possuir acesso de leitura ao Security log; uma falha de acesso é reportada sem tentativa de elevação de privilégios. O coletor não limpa, exporta nem modifica logs ou políticas de auditoria.
+
 ### Configuração dos detectores
 
-Os dois comandos compartilham os seguintes defaults e opções:
+Os três comandos compartilham os seguintes defaults e opções de detecção:
 
 | Regra | Default | Opções |
 |---|---|---|
@@ -170,9 +182,10 @@ Os testes cobrem modelos, parsers, regras, pipelines, CLI e as amostras de demon
 
 - o parser Linux cobre somente `Accepted password`, `Failed password` e `Failed password for invalid user` do OpenSSH;
 - timestamps Linux tradicionais exigem ano e offset explícitos na CLI;
-- a entrada Windows é um formato de intercâmbio JSON, não coleta nativa do Event Log;
+- a coleta nativa funciona somente no Windows e depende do acesso da conta ao Security log local;
+- o formato JSON continua sendo necessário para análise Windows portátil ou offline;
 - somente os Event IDs 4624 e 4625 são normalizados;
-- arquivos EVTX e XML do Windows não são lidos;
+- arquivos EVTX não são lidos e não existe coleta de computadores remotos;
 - as regras são heurísticas configuráveis e não mantêm estado persistente de incidentes;
 - não há baseline comportamental, machine learning, threat intelligence ou GeoIP;
 - não há exportação de relatórios, banco de dados, integração com SIEM, GUI ou interface web.
