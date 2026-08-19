@@ -13,6 +13,7 @@ from login_log_analyzer.success_after_failures import (
     SuccessfulLoginAfterFailuresDetector,
 )
 from login_log_analyzer.windows_authentication import WindowsAuthenticationParser
+from login_log_analyzer.windows_account_lockout import WindowsAccountLockoutParser
 from login_log_analyzer.windows_json_analysis import (
     WindowsJsonAnalysisResult,
     WindowsJsonFileAnalyzer,
@@ -28,6 +29,7 @@ def create_analyzer(
 ) -> WindowsJsonFileAnalyzer:
     return WindowsJsonFileAnalyzer(
         windows_parser=WindowsAuthenticationParser(),
+        account_lockout_parser=WindowsAccountLockoutParser(),
         brute_force_detector=BruteForceDetector(
             failure_threshold=brute_force_threshold,
             window=timedelta(minutes=5),
@@ -84,6 +86,8 @@ def test_analyzes_valid_empty_array(tmp_path: Path) -> None:
     assert result.password_spray_findings == ()
     assert result.successful_login_after_failures_findings == ()
     assert result.multiple_source_ips_findings == ()
+    assert result.account_lockout_events == ()
+    assert result.account_lockout_count == 0
 
 
 def test_empty_file_is_invalid_json(tmp_path: Path) -> None:
@@ -139,6 +143,100 @@ def test_counts_unsupported_event_id_without_requiring_authentication_fields(
     assert result.parsed_event_count == 0
     assert result.unsupported_record_count == 1
     assert result.record_error_count == 0
+
+
+def test_parses_valid_account_lockout_record(tmp_path: Path) -> None:
+    path = tmp_path / "lockout.json"
+    write_document(
+        path,
+        [
+            create_record(
+                event_id=4740,
+                timestamp="2026-08-19T10:30:00-03:00",
+                username="DemoUser",
+                target_domain="DEMO",
+                caller_computer="WS-042",
+                recording_computer="DC01.demo.invalid",
+                source_ip=None,
+            )
+        ],
+    )
+
+    result = create_analyzer().analyze(path)
+
+    assert result.parsed_event_count == 0
+    assert result.account_lockout_count == 1
+    event = result.account_lockout_events[0]
+    assert event.username == "DemoUser"
+    assert event.timestamp.utcoffset() == timedelta(hours=-3)
+    assert event.target_domain == "DEMO"
+    assert event.caller_computer == "WS-042"
+    assert event.recording_computer == "DC01.demo.invalid"
+
+
+def test_mixed_authentication_and_lockout_records_preserve_counts(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "mixed-event-families.json"
+    write_document(
+        path,
+        [
+            create_record(event_id=4624),
+            create_record(event_id=4625),
+            create_record(event_id=4740, caller_computer=None),
+        ],
+    )
+
+    result = create_analyzer().analyze(path)
+
+    assert result.total_records == 3
+    assert result.parsed_event_count == 2
+    assert result.account_lockout_count == 1
+    assert result.unsupported_record_count == 0
+
+
+def test_malformed_lockout_is_recoverable_and_later_record_is_processed(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "recoverable-lockout.json"
+    malformed = create_record(event_id=4740)
+    del malformed["username"]
+    write_document(
+        path,
+        [malformed, create_record(event_id=4740, username="LaterUser")],
+    )
+
+    result = create_analyzer().analyze(path)
+
+    assert result.record_error_count == 1
+    assert result.record_errors[0].record_number == 1
+    assert "username" in result.record_errors[0].message
+    assert result.account_lockout_count == 1
+    assert result.account_lockout_events[0].username == "LaterUser"
+
+
+def test_lockouts_are_not_passed_to_authentication_detectors(tmp_path: Path) -> None:
+    path = tmp_path / "lockout-isolation.json"
+    write_document(
+        path,
+        [
+            create_record(
+                event_id=4740,
+                username="Admin",
+                source_ip=f"192.0.2.{number}",
+            )
+            for number in range(1, 7)
+        ],
+    )
+
+    result = create_analyzer().analyze(path)
+
+    assert result.parsed_event_count == 0
+    assert result.account_lockout_count == 6
+    assert result.brute_force_findings == ()
+    assert result.password_spray_findings == ()
+    assert result.successful_login_after_failures_findings == ()
+    assert result.multiple_source_ips_findings == ()
 
 
 def test_reports_malformed_supported_record(tmp_path: Path) -> None:
@@ -407,6 +505,7 @@ def test_result_and_record_errors_are_immutable(tmp_path: Path) -> None:
     assert isinstance(result.record_errors[0], WindowsJsonRecordError)
     assert isinstance(result.successful_login_after_failures_findings, tuple)
     assert isinstance(result.multiple_source_ips_findings, tuple)
+    assert isinstance(result.account_lockout_events, tuple)
     with pytest.raises(FrozenInstanceError):
         result.total_records = 2
     with pytest.raises(FrozenInstanceError):

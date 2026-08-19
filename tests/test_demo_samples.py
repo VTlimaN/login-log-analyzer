@@ -36,3 +36,20 @@ def test_documented_demo_produces_all_finding_categories(
     assert "Achados fora do horário: 1" in output
     assert "Achados de password spraying: 1" in output
     assert "Erros de parsing: 0" in output or "Erros de registro: 0" in output
+
+
+def test_account_lockout_sample_produces_direct_observation(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    arguments = [
+        "analyze-windows",
+        str(PROJECT_ROOT / "samples" / "windows_account_lockout.json"),
+    ]
+
+    assert main(arguments) == 0
+
+    output = capsys.readouterr().out
+    assert "Eventos de autenticação: 0" in output
+    assert "Bloqueios de conta: 1" in output
+    assert "DemoLockedUser" in output
+    assert "DEMO-WS-042" in output

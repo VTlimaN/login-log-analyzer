@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from login_log_analyzer.account_lockout import AccountLockoutEvent
 from login_log_analyzer.authentication import AuthenticationPlatform
 from login_log_analyzer.brute_force import BruteForceFinding
 from login_log_analyzer.linux_file_analysis import (
@@ -37,6 +38,24 @@ from login_log_analyzer.windows_native_analysis import (
 
 FIRST = datetime.fromisoformat("2026-08-18T09:00:00-03:00")
 LAST = datetime.fromisoformat("2026-08-18T09:04:00-03:00")
+
+
+def account_lockouts() -> tuple[AccountLockoutEvent, ...]:
+    return (
+        AccountLockoutEvent(
+            timestamp=datetime.fromisoformat("2026-08-19T10:30:00-03:00"),
+            username="LockedUser",
+            platform=AuthenticationPlatform.WINDOWS,
+            target_domain="DEMO",
+            caller_computer="WS-042",
+            recording_computer="DC01.demo.invalid",
+        ),
+        AccountLockoutEvent(
+            timestamp=datetime.fromisoformat("2026-08-19T11:30:00-03:00"),
+            username="NoContextUser",
+            platform=AuthenticationPlatform.WINDOWS,
+        ),
+    )
 
 
 def findings() -> tuple[
@@ -134,6 +153,7 @@ def linux_result(*, include_findings: bool = True) -> LinuxLogAnalysisResult:
                 password_spray_findings=findings()[2],
                 successful_login_after_failures_findings=findings()[3],
                 multiple_source_ips_findings=findings()[4],
+                account_lockout_events=account_lockouts(),
             ),
             "windows_json",
             "total_records",
@@ -150,6 +170,7 @@ def linux_result(*, include_findings: bool = True) -> LinuxLogAnalysisResult:
                 password_spray_findings=findings()[2],
                 successful_login_after_failures_findings=findings()[3],
                 multiple_source_ips_findings=findings()[4],
+                account_lockout_events=account_lockouts(),
             ),
             "windows_native",
             "collected_record_count",
@@ -207,6 +228,29 @@ def test_exports_complete_json_contract(
         "source_ips": ["192.0.2.10", "192.0.2.20", "2001:db8::10"],
     }
     assert document["summary"]["multiple_source_ips_finding_count"] == 1
+    if source == "linux_file":
+        assert "account_lockout_count" not in document["summary"]
+        assert "account_lockouts" not in document
+    else:
+        assert document["summary"]["account_lockout_count"] == 2
+        assert document["account_lockouts"] == [
+            {
+                "timestamp": "2026-08-19T10:30:00-03:00",
+                "username": "LockedUser",
+                "platform": "windows",
+                "target_domain": "DEMO",
+                "caller_computer": "WS-042",
+                "recording_computer": "DC01.demo.invalid",
+            },
+            {
+                "timestamp": "2026-08-19T11:30:00-03:00",
+                "username": "NoContextUser",
+                "platform": "windows",
+                "target_domain": None,
+                "caller_computer": None,
+                "recording_computer": None,
+            },
+        ]
     assert "Produção" in destination.read_text(encoding="utf-8")
     assert destination.read_bytes().endswith(b"\n")
 
@@ -247,6 +291,28 @@ def test_exports_header_only_csv_when_there_are_no_findings(tmp_path: Path) -> N
     destination = tmp_path / "empty.csv"
 
     export_csv_report(linux_result(include_findings=False), destination)
+
+    with destination.open(encoding="utf-8", newline="") as report:
+        rows = list(csv.reader(report))
+    assert rows == [list(CSV_COLUMNS)]
+
+
+def test_csv_excludes_direct_account_lockout_observations(tmp_path: Path) -> None:
+    destination = tmp_path / "lockouts.csv"
+    result = WindowsJsonAnalysisResult(
+        total_records=1,
+        parsed_event_count=0,
+        unsupported_record_count=0,
+        record_errors=(),
+        brute_force_findings=(),
+        off_hours_findings=(),
+        password_spray_findings=(),
+        successful_login_after_failures_findings=(),
+        multiple_source_ips_findings=(),
+        account_lockout_events=account_lockouts(),
+    )
+
+    export_csv_report(result, destination)
 
     with destination.open(encoding="utf-8", newline="") as report:
         rows = list(csv.reader(report))

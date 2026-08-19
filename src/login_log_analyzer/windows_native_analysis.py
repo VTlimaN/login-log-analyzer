@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ElementTree
 from dataclasses import dataclass
 from datetime import datetime
 
+from login_log_analyzer.account_lockout import AccountLockoutEvent
 from login_log_analyzer.authentication import AuthenticationEvent
 from login_log_analyzer.brute_force import BruteForceDetector, BruteForceFinding
 from login_log_analyzer.multiple_source_ips import (
@@ -25,10 +26,17 @@ from login_log_analyzer.windows_authentication import (
     WindowsAuthenticationParseError,
     WindowsAuthenticationParser,
 )
+from login_log_analyzer.windows_account_lockout import (
+    WINDOWS_ACCOUNT_LOCKOUT_EVENT_ID,
+    WindowsAccountLockoutParseError,
+    WindowsAccountLockoutParser,
+)
 
 
 DEFAULT_WINDOWS_NATIVE_EVENT_LIMIT = 100
-WINDOWS_SECURITY_QUERY = "*[System[(EventID=4624 or EventID=4625)]]"
+WINDOWS_SECURITY_QUERY = (
+    "*[System[(EventID=4624 or EventID=4625 or EventID=4740)]]"
+)
 XML_DECLARATION_PATTERN = re.compile(r"<\?xml[^>]*\?>")
 
 
@@ -76,10 +84,15 @@ class WindowsNativeAnalysisResult:
         ...,
     ]
     multiple_source_ips_findings: tuple[MultipleSourceIPsFinding, ...]
+    account_lockout_events: tuple[AccountLockoutEvent, ...]
 
     @property
     def record_error_count(self) -> int:
         return len(self.record_errors)
+
+    @property
+    def account_lockout_count(self) -> int:
+        return len(self.account_lockout_events)
 
 
 class WindowsEventLogCollector:
@@ -182,6 +195,7 @@ class WindowsNativeEventAnalyzer:
         self,
         collector: WindowsEventLogCollector,
         windows_parser: WindowsAuthenticationParser,
+        account_lockout_parser: WindowsAccountLockoutParser,
         brute_force_detector: BruteForceDetector,
         off_hours_detector: OffHoursLoginDetector,
         password_spray_detector: PasswordSprayDetector,
@@ -190,6 +204,7 @@ class WindowsNativeEventAnalyzer:
     ) -> None:
         self._collector = collector
         self._windows_parser = windows_parser
+        self._account_lockout_parser = account_lockout_parser
         self._brute_force_detector = brute_force_detector
         self._off_hours_detector = off_hours_detector
         self._password_spray_detector = password_spray_detector
@@ -204,16 +219,30 @@ class WindowsNativeEventAnalyzer:
     ) -> WindowsNativeAnalysisResult:
         records = self._collector.collect(max_events)
         events: list[AuthenticationEvent] = []
+        account_lockout_events: list[AccountLockoutEvent] = []
         record_errors: list[WindowsNativeRecordError] = []
         unsupported_record_count = 0
 
         for record_number, record in enumerate(records, start=1):
             try:
                 event_data = self._convert_record(record)
-                event = self._windows_parser.parse_event(event_data)
+                event_id = event_data["event_id"]
+                if event_id in SUPPORTED_EVENT_OUTCOMES:
+                    event = self._windows_parser.parse_event(event_data)
+                    if event is not None:
+                        events.append(event)
+                elif event_id == WINDOWS_ACCOUNT_LOCKOUT_EVENT_ID:
+                    lockout_event = self._account_lockout_parser.parse_event(
+                        event_data
+                    )
+                    if lockout_event is not None:
+                        account_lockout_events.append(lockout_event)
+                else:
+                    unsupported_record_count += 1
             except (
                 WindowsNativeRecordConversionError,
                 WindowsAuthenticationParseError,
+                WindowsAccountLockoutParseError,
             ) as error:
                 record_errors.append(
                     WindowsNativeRecordError(
@@ -222,11 +251,6 @@ class WindowsNativeEventAnalyzer:
                     )
                 )
                 continue
-
-            if event is None:
-                unsupported_record_count += 1
-            else:
-                events.append(event)
 
         normalized_events = tuple(events)
         return WindowsNativeAnalysisResult(
@@ -251,6 +275,7 @@ class WindowsNativeEventAnalyzer:
             multiple_source_ips_findings=tuple(
                 self._multiple_source_ips_detector.detect(normalized_events)
             ),
+            account_lockout_events=tuple(account_lockout_events),
         )
 
     def _convert_record(self, record: ElementTree.Element) -> dict[str, object]:
@@ -277,7 +302,8 @@ class WindowsNativeEventAnalyzer:
             ) from error
 
         if event_id not in SUPPORTED_EVENT_OUTCOMES:
-            return {"event_id": event_id}
+            if event_id != WINDOWS_ACCOUNT_LOCKOUT_EVENT_ID:
+                return {"event_id": event_id}
 
         time_created = self._find_child(system, "TimeCreated")
         timestamp_value = (
@@ -286,10 +312,23 @@ class WindowsNativeEventAnalyzer:
         timestamp = self._parse_timestamp(timestamp_value)
         event_data = self._event_data_values(record)
 
-        if "TargetUserName" not in event_data:
+        if event_id in SUPPORTED_EVENT_OUTCOMES and "TargetUserName" not in event_data:
             raise WindowsNativeRecordConversionError(
                 "event is missing TargetUserName"
             )
+
+        if event_id == WINDOWS_ACCOUNT_LOCKOUT_EVENT_ID:
+            recording_computer = self._element_text(
+                self._find_child(system, "Computer")
+            )
+            return {
+                "event_id": event_id,
+                "timestamp": timestamp,
+                "username": event_data.get("TargetUserName"),
+                "target_domain": event_data.get("TargetDomainName"),
+                "caller_computer": event_data.get("CallerComputerName"),
+                "recording_computer": recording_computer,
+            }
 
         return {
             "event_id": event_id,
@@ -337,6 +376,12 @@ class WindowsNativeEventAnalyzer:
             if name:
                 values[name] = data_element.text or ""
         return values
+
+    @staticmethod
+    def _element_text(element: ElementTree.Element | None) -> str | None:
+        if element is None or element.text is None:
+            return None
+        return element.text
 
     @classmethod
     def _find_child(

@@ -5,6 +5,7 @@ import os
 import tempfile
 from pathlib import Path
 
+from login_log_analyzer.account_lockout import AccountLockoutEvent
 from login_log_analyzer.brute_force import BruteForceFinding
 from login_log_analyzer.linux_file_analysis import LinuxLogAnalysisResult
 from login_log_analyzer.multiple_source_ips import MultipleSourceIPsFinding
@@ -111,7 +112,7 @@ def _json_document(result: AnalysisResult) -> dict[str, object]:
             ),
         }
     )
-    return {
+    document: dict[str, object] = {
         "report_version": REPORT_VERSION,
         "analysis_source": source,
         "summary": summary,
@@ -138,6 +139,12 @@ def _json_document(result: AnalysisResult) -> dict[str, object]:
             ],
         },
     }
+    if isinstance(result, (WindowsJsonAnalysisResult, WindowsNativeAnalysisResult)):
+        document["account_lockouts"] = [
+            _account_lockout_json(event)
+            for event in result.account_lockout_events
+        ]
+    return document
 
 
 def _source_data(
@@ -165,6 +172,7 @@ def _source_data(
                 "parsed_event_count": result.parsed_event_count,
                 "unsupported_record_count": result.unsupported_record_count,
                 "record_error_count": result.record_error_count,
+                "account_lockout_count": result.account_lockout_count,
             },
             [
                 {"record_number": error.record_number, "message": error.message}
@@ -179,6 +187,7 @@ def _source_data(
                 "parsed_event_count": result.parsed_event_count,
                 "unsupported_record_count": result.unsupported_record_count,
                 "record_error_count": result.record_error_count,
+                "account_lockout_count": result.account_lockout_count,
             },
             [
                 {"record_number": error.record_number, "message": error.message}
@@ -230,6 +239,17 @@ def _successful_login_after_failures_json(
         "successful_login": finding.successful_login.isoformat(),
         "failure_count": finding.failure_count,
         "platform": finding.platform.value,
+    }
+
+
+def _account_lockout_json(event: AccountLockoutEvent) -> dict[str, object]:
+    return {
+        "timestamp": event.timestamp.isoformat(),
+        "username": event.username,
+        "platform": event.platform.value,
+        "target_domain": event.target_domain,
+        "caller_computer": event.caller_computer,
+        "recording_computer": event.recording_computer,
     }
 
 

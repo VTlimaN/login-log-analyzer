@@ -18,6 +18,7 @@ from login_log_analyzer.success_after_failures import (
     SuccessfulLoginAfterFailuresDetector,
 )
 from login_log_analyzer.windows_authentication import WindowsAuthenticationParser
+from login_log_analyzer.windows_account_lockout import WindowsAccountLockoutParser
 from login_log_analyzer.windows_native_analysis import (
     WINDOWS_SECURITY_QUERY,
     WindowsEventLogCollector,
@@ -41,6 +42,9 @@ def create_event_xml(
     username: str | None = "TargetAccount",
     source_ip: str | None = "192.0.2.25",
     subject_username: str = "SYSTEM",
+    target_domain: str | None = None,
+    caller_computer: str | None = None,
+    recording_computer: str | None = None,
 ) -> str:
     target_data = (
         f'<Data Name="TargetUserName">{username}</Data>'
@@ -52,15 +56,31 @@ def create_event_xml(
         if source_ip is not None
         else ""
     )
+    target_domain_data = (
+        f'<Data Name="TargetDomainName">{target_domain}</Data>'
+        if target_domain is not None
+        else ""
+    )
+    caller_computer_data = (
+        f'<Data Name="CallerComputerName">{caller_computer}</Data>'
+        if caller_computer is not None
+        else ""
+    )
+    computer_data = (
+        f"<Computer>{recording_computer}</Computer>"
+        if recording_computer is not None
+        else ""
+    )
     return (
         f'<Event xmlns="{EVENT_NAMESPACE}">'
         "<System>"
         f"<EventID>{event_id}</EventID>"
         f'<TimeCreated SystemTime="{timestamp}" />'
+        f"{computer_data}"
         "</System>"
         "<EventData>"
         f'<Data Name="SubjectUserName">{subject_username}</Data>'
-        f"{target_data}{source_data}"
+        f"{target_data}{source_data}{target_domain_data}{caller_computer_data}"
         "</EventData>"
         "</Event>"
     )
@@ -97,6 +117,7 @@ def create_recording_analyzer(
     analyzer = WindowsNativeEventAnalyzer(
         collector=collector,
         windows_parser=WindowsAuthenticationParser(),
+        account_lockout_parser=WindowsAccountLockoutParser(),
         brute_force_detector=detector,
         off_hours_detector=RecordingDetector(),
         password_spray_detector=RecordingDetector(),
@@ -112,6 +133,7 @@ def create_detection_analyzer(
     return WindowsNativeEventAnalyzer(
         collector=StaticCollector(records),
         windows_parser=WindowsAuthenticationParser(),
+        account_lockout_parser=WindowsAccountLockoutParser(),
         brute_force_detector=BruteForceDetector(
             failure_threshold=3,
             window=timedelta(minutes=5),
@@ -166,6 +188,7 @@ def test_collector_queries_supported_security_events_safely(
     assert f"/q:{WINDOWS_SECURITY_QUERY}" in command
     assert "EventID=4624" in WINDOWS_SECURITY_QUERY
     assert "EventID=4625" in WINDOWS_SECURITY_QUERY
+    assert "EventID=4740" in WINDOWS_SECURITY_QUERY
     assert "/c:25" in command
     assert "/f:xml" in command
     assert isinstance(options, dict)
@@ -349,6 +372,79 @@ def test_analyzer_processes_multiple_records_and_passes_limit() -> None:
     assert collector.max_events == 12
 
 
+def test_analyzer_extracts_account_lockout_fields() -> None:
+    analyzer, _, detector = create_recording_analyzer(
+        (
+            create_record(
+                event_id=4740,
+                username="LockedUser",
+                source_ip=None,
+                target_domain="DEMO",
+                caller_computer="WS-042",
+                recording_computer="DC01.demo.invalid",
+            ),
+        )
+    )
+
+    result = analyzer.analyze()
+
+    assert detector.events == ()
+    assert result.parsed_event_count == 0
+    assert result.account_lockout_count == 1
+    event = result.account_lockout_events[0]
+    assert event.username == "LockedUser"
+    assert event.target_domain == "DEMO"
+    assert event.caller_computer == "WS-042"
+    assert event.recording_computer == "DC01.demo.invalid"
+    assert event.timestamp.utcoffset() == timedelta(0)
+
+
+def test_native_lockout_allows_missing_caller_computer() -> None:
+    analyzer, _, _ = create_recording_analyzer(
+        (create_record(event_id=4740, caller_computer=None),)
+    )
+
+    event = analyzer.analyze().account_lockout_events[0]
+
+    assert event.caller_computer is None
+
+
+def test_native_mixed_event_families_preserve_authentication_count() -> None:
+    analyzer, _, detector = create_recording_analyzer(
+        (
+            create_record(event_id=4624),
+            create_record(event_id=4625),
+            create_record(event_id=4740),
+        )
+    )
+
+    result = analyzer.analyze()
+
+    assert result.collected_record_count == 3
+    assert result.parsed_event_count == 2
+    assert result.account_lockout_count == 1
+    assert len(detector.events) == 2
+
+
+def test_native_malformed_lockout_is_recoverable() -> None:
+    analyzer, _, detector = create_recording_analyzer(
+        (
+            create_record(event_id=4740, username=None),
+            create_record(event_id=4740, username="LaterUser"),
+            create_record(event_id=4625),
+        )
+    )
+
+    result = analyzer.analyze()
+
+    assert result.record_error_count == 1
+    assert result.record_errors[0].record_number == 1
+    assert "username" in result.record_errors[0].message
+    assert result.account_lockout_count == 1
+    assert result.account_lockout_events[0].username == "LaterUser"
+    assert len(detector.events) == 1
+
+
 def test_analyzer_continues_after_malformed_individual_event() -> None:
     analyzer, _, detector = create_recording_analyzer(
         (create_record(username=None), create_record(username="ValidTarget"))
@@ -410,6 +506,7 @@ def test_native_result_and_record_errors_are_immutable() -> None:
     assert isinstance(result, WindowsNativeAnalysisResult)
     assert isinstance(result.successful_login_after_failures_findings, tuple)
     assert isinstance(result.multiple_source_ips_findings, tuple)
+    assert isinstance(result.account_lockout_events, tuple)
     with pytest.raises(FrozenInstanceError):
         result.collected_record_count = 2
     with pytest.raises(FrozenInstanceError):

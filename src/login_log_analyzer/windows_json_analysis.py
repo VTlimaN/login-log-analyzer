@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from login_log_analyzer.account_lockout import AccountLockoutEvent
 from login_log_analyzer.authentication import AuthenticationEvent
 from login_log_analyzer.brute_force import (
     BruteForceDetector,
@@ -29,6 +30,11 @@ from login_log_analyzer.windows_authentication import (
     SUPPORTED_EVENT_OUTCOMES,
     WindowsAuthenticationParseError,
     WindowsAuthenticationParser,
+)
+from login_log_analyzer.windows_account_lockout import (
+    WINDOWS_ACCOUNT_LOCKOUT_EVENT_ID,
+    WindowsAccountLockoutParseError,
+    WindowsAccountLockoutParser,
 )
 
 
@@ -60,16 +66,22 @@ class WindowsJsonAnalysisResult:
         ...,
     ]
     multiple_source_ips_findings: tuple[MultipleSourceIPsFinding, ...]
+    account_lockout_events: tuple[AccountLockoutEvent, ...]
 
     @property
     def record_error_count(self) -> int:
         return len(self.record_errors)
+
+    @property
+    def account_lockout_count(self) -> int:
+        return len(self.account_lockout_events)
 
 
 class WindowsJsonFileAnalyzer:
     def __init__(
         self,
         windows_parser: WindowsAuthenticationParser,
+        account_lockout_parser: WindowsAccountLockoutParser,
         brute_force_detector: BruteForceDetector,
         off_hours_detector: OffHoursLoginDetector,
         password_spray_detector: PasswordSprayDetector,
@@ -77,6 +89,7 @@ class WindowsJsonFileAnalyzer:
         multiple_source_ips_detector: MultipleSourceIPsDetector,
     ) -> None:
         self._windows_parser = windows_parser
+        self._account_lockout_parser = account_lockout_parser
         self._brute_force_detector = brute_force_detector
         self._off_hours_detector = off_hours_detector
         self._password_spray_detector = password_spray_detector
@@ -93,16 +106,30 @@ class WindowsJsonFileAnalyzer:
             raise WindowsJsonFormatError("top-level JSON value must be an array")
 
         events: list[AuthenticationEvent] = []
+        account_lockout_events: list[AccountLockoutEvent] = []
         record_errors: list[WindowsJsonRecordError] = []
         unsupported_record_count = 0
 
         for record_number, record in enumerate(document, start=1):
             try:
                 event_data = self._convert_record(record)
-                event = self._windows_parser.parse_event(event_data)
+                event_id = event_data["event_id"]
+                if event_id in SUPPORTED_EVENT_OUTCOMES:
+                    event = self._windows_parser.parse_event(event_data)
+                    if event is not None:
+                        events.append(event)
+                elif event_id == WINDOWS_ACCOUNT_LOCKOUT_EVENT_ID:
+                    lockout_event = self._account_lockout_parser.parse_event(
+                        event_data
+                    )
+                    if lockout_event is not None:
+                        account_lockout_events.append(lockout_event)
+                else:
+                    unsupported_record_count += 1
             except (
                 WindowsJsonRecordConversionError,
                 WindowsAuthenticationParseError,
+                WindowsAccountLockoutParseError,
             ) as error:
                 record_errors.append(
                     WindowsJsonRecordError(
@@ -111,11 +138,6 @@ class WindowsJsonFileAnalyzer:
                     )
                 )
                 continue
-
-            if event is None:
-                unsupported_record_count += 1
-            else:
-                events.append(event)
 
         normalized_events = tuple(events)
 
@@ -141,6 +163,7 @@ class WindowsJsonFileAnalyzer:
             multiple_source_ips_findings=tuple(
                 self._multiple_source_ips_detector.detect(normalized_events)
             ),
+            account_lockout_events=tuple(account_lockout_events),
         )
 
     def _convert_record(self, record: object) -> Mapping[str, object]:
@@ -149,10 +172,11 @@ class WindowsJsonFileAnalyzer:
 
         event_data = dict(record)
         event_id = event_data.get("event_id")
-        if (
-            not isinstance(event_id, int)
-            or isinstance(event_id, bool)
-            or event_id not in SUPPORTED_EVENT_OUTCOMES
+        if not isinstance(event_id, int) or isinstance(event_id, bool):
+            raise WindowsJsonRecordConversionError("event_id must be an integer")
+        if event_id not in (
+            *SUPPORTED_EVENT_OUTCOMES,
+            WINDOWS_ACCOUNT_LOCKOUT_EVENT_ID,
         ):
             return event_data
 

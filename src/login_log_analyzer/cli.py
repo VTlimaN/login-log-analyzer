@@ -7,6 +7,7 @@ from datetime import time, timedelta, timezone
 from pathlib import Path
 from typing import TextIO
 
+from login_log_analyzer.account_lockout import AccountLockoutEvent
 from login_log_analyzer.brute_force import BruteForceDetector, BruteForceFinding
 from login_log_analyzer.linux_authentication import LinuxAuthenticationParser
 from login_log_analyzer.linux_file_analysis import (
@@ -34,6 +35,7 @@ from login_log_analyzer.success_after_failures import (
     SuccessfulLoginAfterFailuresFinding,
 )
 from login_log_analyzer.windows_authentication import WindowsAuthenticationParser
+from login_log_analyzer.windows_account_lockout import WindowsAccountLockoutParser
 from login_log_analyzer.windows_json_analysis import (
     WindowsJsonAnalysisResult,
     WindowsJsonFileAnalyzer,
@@ -269,7 +271,7 @@ def create_argument_parser() -> argparse.ArgumentParser:
         "analyze-windows",
         help="analisa um arquivo JSON de autenticação Windows",
         description=(
-            "Analisa eventos Windows 4624 e 4625 extraídos para um arquivo JSON."
+            "Analisa eventos Windows 4624, 4625 e 4740 extraídos para JSON."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -285,7 +287,7 @@ def create_argument_parser() -> argparse.ArgumentParser:
         "analyze-windows-native",
         help="analisa o Windows Security Event Log local",
         description=(
-            "Consulta eventos 4624 e 4625 no Windows Security Event Log local."
+            "Consulta eventos 4624, 4625 e 4740 no Windows Security Event Log local."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -369,6 +371,7 @@ def create_windows_analyzer(arguments: argparse.Namespace) -> WindowsJsonFileAna
     ) = create_detectors(arguments)
     return WindowsJsonFileAnalyzer(
         windows_parser=WindowsAuthenticationParser(),
+        account_lockout_parser=WindowsAccountLockoutParser(),
         brute_force_detector=brute_force_detector,
         off_hours_detector=off_hours_detector,
         password_spray_detector=password_spray_detector,
@@ -392,6 +395,7 @@ def create_windows_native_analyzer(
     return WindowsNativeEventAnalyzer(
         collector=WindowsEventLogCollector(),
         windows_parser=WindowsAuthenticationParser(),
+        account_lockout_parser=WindowsAccountLockoutParser(),
         brute_force_detector=brute_force_detector,
         off_hours_detector=off_hours_detector,
         password_spray_detector=password_spray_detector,
@@ -493,6 +497,27 @@ def render_multiple_source_ips_findings(
         )
 
 
+def render_account_lockout_events(
+    events: tuple[AccountLockoutEvent, ...],
+    output: TextIO,
+) -> None:
+    if not events:
+        return
+
+    print("\nBloqueios de conta observados", file=output)
+    for event in events:
+        target_domain = event.target_domain or "N/A"
+        caller_computer = event.caller_computer or "N/A"
+        recording_computer = event.recording_computer or "N/A"
+        print(
+            f"  {event.username} | {event.timestamp.isoformat()} | "
+            f"domínio: {target_domain} | "
+            f"computador de origem: {caller_computer} | "
+            f"computador de registro: {recording_computer}",
+            file=output,
+        )
+
+
 def render_linux_result(
     path: Path,
     result: LinuxLogAnalysisResult,
@@ -545,6 +570,7 @@ def render_windows_result(
     print("Resumo Windows", file=output)
     print(f"  Registros totais: {result.total_records}", file=output)
     print(f"  Eventos de autenticação: {result.parsed_event_count}", file=output)
+    print(f"  Bloqueios de conta: {result.account_lockout_count}", file=output)
     print(
         f"  Registros não suportados: {result.unsupported_record_count}",
         file=output,
@@ -580,6 +606,7 @@ def render_windows_result(
         output,
     )
     render_multiple_source_ips_findings(result.multiple_source_ips_findings, output)
+    render_account_lockout_events(result.account_lockout_events, output)
 
 
 def render_windows_native_result(
@@ -589,6 +616,7 @@ def render_windows_native_result(
     print("Resumo da coleta nativa Windows", file=output)
     print(f"  Registros coletados: {result.collected_record_count}", file=output)
     print(f"  Eventos de autenticação: {result.parsed_event_count}", file=output)
+    print(f"  Bloqueios de conta: {result.account_lockout_count}", file=output)
     print(
         f"  Registros não suportados: {result.unsupported_record_count}",
         file=output,
@@ -624,6 +652,7 @@ def render_windows_native_result(
         output,
     )
     render_multiple_source_ips_findings(result.multiple_source_ips_findings, output)
+    render_account_lockout_events(result.account_lockout_events, output)
 
 
 def export_requested_reports(

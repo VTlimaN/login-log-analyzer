@@ -1,0 +1,10 @@
+[
+  {
+    "event_id": 4740,
+    "timestamp": "2026-08-19T10:30:00-03:00",
+    "username": "DemoLockedUser",
+    "target_domain": "DEMO",
+    "caller_computer": "DEMO-WS-042",
+    "recording_computer": "DEMO-DC01.example.invalid"
+  }
+]
