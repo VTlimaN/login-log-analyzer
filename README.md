@@ -1,8 +1,8 @@
 # Analisador de Logs de Login
 
-Analisador de autenticação para estudo e portfólio de Blue Team. O projeto converte registros Linux e Windows para um modelo comum e aplica regras determinísticas para destacar atividades que merecem investigação.
+Analisador de autenticação e eventos de segurança Windows para estudo e portfólio de Blue Team. O projeto normaliza telemetria Linux e Windows, aplica regras determinísticas e correlaciona sinais relacionados para destacar atividades que merecem investigação.
 
-A versão declarada no pacote é `0.1.0`. O repositório está preparado como candidato a uma primeira versão pública, sem alegar prontidão para produção ou substituir um SIEM.
+A versão declarada no pacote é `0.2.0`. A ferramenta possui escopo local e defensivo, sem alegar prontidão para produção ou substituir um SIEM.
 
 ## Capacidades atuais
 
@@ -54,6 +54,29 @@ Uma descrição mais detalhada está em [docs/architecture.md](docs/architecture
 
 O runtime usa somente a biblioteca padrão do Python. `pytest` é a única dependência de desenvolvimento.
 
+## Início rápido
+
+Para instalar apenas a aplicação a partir da raiz clonada:
+
+```powershell
+python -m pip install .
+```
+
+Para desenvolvimento, use a instalação editável com a dependência de testes:
+
+```powershell
+python -m pip install -e ".[dev]"
+python -m pytest
+```
+
+Depois da instalação, os comandos principais são:
+
+```powershell
+login-log-analyzer analyze-linux .\samples\linux_auth.log --year 2026 --timezone-offset=-03:00
+login-log-analyzer analyze-windows .\samples\windows_auth.json
+login-log-analyzer analyze-windows-native
+```
+
 ## Instalação para desenvolvimento
 
 No Windows PowerShell, entre na raiz clonada do projeto e prepare o ambiente isolado:
@@ -68,13 +91,7 @@ python -m pytest
 python -m login_log_analyzer --help
 ```
 
-O modo editável reflete alterações locais sem reinstalar o pacote e inclui as ferramentas de teste. Para instalar apenas a aplicação a partir deste diretório, sem dependências de desenvolvimento:
-
-```powershell
-python -m pip install .
-```
-
-O projeto não está publicado no PyPI; esse comando instala o código-fonte local.
+O modo editável reflete alterações locais sem reinstalar o pacote e inclui as ferramentas de teste. O projeto não está publicado no PyPI; os comandos acima instalam o código-fonte local.
 
 ## Uso da CLI
 
@@ -176,23 +193,17 @@ O contrato usa `report_version` igual a `1`. Os identificadores de origem são `
 
 ## Demonstração reproduzível
 
-As amostras de ataque são sintéticas e foram construídas para acionar os três detectores usando os defaults da CLI:
+As amostras são sintéticas, determinísticas e demonstram categorias distintas do resultado:
 
 ```powershell
 python -m login_log_analyzer analyze-linux .\samples\demo_linux_attack.log --year 2026 --timezone-offset=-03:00
 python -m login_log_analyzer analyze-windows .\samples\demo_windows_attack.json
+python -m login_log_analyzer analyze-windows .\samples\windows_account_lockout.json
 python -m login_log_analyzer analyze-windows .\samples\windows_account_lifecycle.json
 python -m login_log_analyzer analyze-windows .\samples\windows_brute_force_lockout.json
 ```
 
-Em cada comando, o resumo esperado contém 10 eventos de autenticação e um achado em cada categoria:
-
-```text
-Eventos de autenticação: 10
-Achados de força bruta: 1
-Achados fora do horário: 1
-Achados de password spraying: 1
-```
+Os dois demos de ataque produzem dez eventos de autenticação e um finding de força bruta, um de login fora do horário e um de password spraying. A amostra de bloqueio produz uma observação 4740; a de lifecycle produz cinco observações, uma por ação suportada; e a amostra de correlação produz separadamente um finding de força bruta, uma observação de bloqueio e um finding correlacionado.
 
 ## Testes
 

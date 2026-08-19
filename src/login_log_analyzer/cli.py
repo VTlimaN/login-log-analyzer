@@ -258,7 +258,7 @@ def add_brute_force_lockout_argument(
 def create_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="login-log-analyzer",
-        description="Analisa eventos de autenticação normalizados.",
+        description="Analisa autenticações e eventos de segurança Windows.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     linux_parser = commands.add_parser(
@@ -290,7 +290,7 @@ def create_argument_parser() -> argparse.ArgumentParser:
 
     windows_parser = commands.add_parser(
         "analyze-windows",
-        help="analisa um arquivo JSON de autenticação Windows",
+        help="analisa um arquivo JSON de eventos de segurança Windows",
         description=(
             "Analisa eventos Windows 4624, 4625, 4720, 4722, 4725, 4726, "
             "4740 e 4767 extraídos para JSON."
