@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from login_log_analyzer.brute_force import BruteForceDetector
+from login_log_analyzer.brute_force_lockout import BruteForceAccountLockoutCorrelator
 from login_log_analyzer.account_lifecycle import AccountLifecycleAction
 from login_log_analyzer.multiple_source_ips import MultipleSourceIPsDetector
 from login_log_analyzer.off_hours import OffHoursLoginDetector
@@ -30,6 +31,7 @@ def create_analyzer(
     *,
     brute_force_threshold: int = 3,
     password_spray_threshold: int = 3,
+    correlation_window: timedelta = timedelta(minutes=15),
 ) -> WindowsJsonFileAnalyzer:
     return WindowsJsonFileAnalyzer(
         windows_parser=WindowsAuthenticationParser(),
@@ -57,6 +59,9 @@ def create_analyzer(
         multiple_source_ips_detector=MultipleSourceIPsDetector(
             source_ip_threshold=3,
             window=timedelta(minutes=5),
+        ),
+        brute_force_account_lockout_correlator=(
+            BruteForceAccountLockoutCorrelator(window=correlation_window)
         ),
     )
 
@@ -627,3 +632,62 @@ def test_result_and_record_errors_are_immutable(tmp_path: Path) -> None:
         result.total_records = 2
     with pytest.raises(FrozenInstanceError):
         result.record_errors[0].record_number = 2
+
+
+def test_pipeline_correlates_brute_force_with_later_account_lockout(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "correlation.json"
+    records = [
+        create_record(
+            event_id=4625,
+            timestamp=f"2026-08-19T12:0{minute}:00+00:00",
+            username="alice",
+            source_ip="192.0.2.44",
+        )
+        for minute in range(3)
+    ]
+    records.append(
+        {
+            "event_id": 4740,
+            "timestamp": "2026-08-19T12:10:00+00:00",
+            "username": "alice",
+        }
+    )
+    write_document(path, records)
+
+    result = create_analyzer().analyze(path)
+
+    assert len(result.brute_force_findings) == 1
+    assert result.account_lockout_count == 1
+    assert result.brute_force_account_lockout_finding_count == 1
+    assert result.brute_force_account_lockout_findings[0].username == "alice"
+    assert result.account_lifecycle_events == ()
+
+
+def test_pipeline_respects_custom_correlation_window(tmp_path: Path) -> None:
+    path = tmp_path / "outside-window.json"
+    records = [
+        create_record(
+            event_id=4625,
+            timestamp=f"2026-08-19T12:0{minute}:00+00:00",
+            username="alice",
+        )
+        for minute in range(3)
+    ]
+    records.append(
+        {
+            "event_id": 4740,
+            "timestamp": "2026-08-19T12:10:00+00:00",
+            "username": "alice",
+        }
+    )
+    write_document(path, records)
+
+    result = create_analyzer(
+        correlation_window=timedelta(minutes=5)
+    ).analyze(path)
+
+    assert len(result.brute_force_findings) == 1
+    assert result.account_lockout_count == 1
+    assert result.brute_force_account_lockout_findings == ()

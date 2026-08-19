@@ -10,6 +10,8 @@ Windows JSON/nativo -> roteamento -> 4624/4625 -> WindowsAuthenticationParser ->
                                   |-> 4740 -> WindowsAccountLockoutParser -> AccountLockoutEvent[] -------------/
                                   \-> lifecycle IDs -> WindowsAccountLifecycleParser -> AccountLifecycleEvent[] /
                                                                                                                   |
+                                  BruteForceFinding + AccountLockoutEvent -> correlator -> finding correlacionado
+                                                                                                                  |
                                                                                                        CLI / serialização
                                                                                                             /       \
                                                                                                JSON completo       CSV findings
@@ -24,6 +26,7 @@ As responsabilidades são:
 - **`AccountLockoutEvent`:** representa uma observação direta de bloqueio Windows 4740;
 - **`AccountLifecycleEvent`:** representa uma transição explícita de ciclo de vida de conta Windows;
 - **detectores:** aplicam regras heurísticas somente aos `AuthenticationEvent` normalizados.
+- **correlator:** associa `BruteForceFinding` e `AccountLockoutEvent` sem alterar os sinais de origem.
 
 ## Normalização
 
@@ -100,9 +103,15 @@ O detector é stateless entre chamadas e heurístico. O finding indica que tenta
 
 Um finding é emitido quando o threshold de IPs distintos é atingido e novos findings ficam suprimidos enquanto as falhas consecutivas do username permanecem separadas por no máximo a janela. Uma lacuna maior inicia novo episódio. A tupla de IPs é imutável e ordenada deterministicamente por versão e valor numérico. A regra é heurística e não afirma intenção maliciosa.
 
+## Correlação
+
+`BruteForceAccountLockoutCorrelator` recebe findings de força bruta já calculados e observações `AccountLockoutEvent`. Para cada bloqueio, seleciona no máximo o `BruteForceFinding` elegível mais recente do mesmo username exato, usando `last_observed` como referência. A janela inclusiva padrão é de 15 minutos, comparada por instantes absolutos; um bloqueio anterior ao finding não é elegível. Cada observação de bloqueio é avaliada independentemente e os inputs não são consumidos nem modificados.
+
+O resultado `BruteForceAccountLockoutFinding` preserva o IP e a faixa temporal do finding heurístico, o timestamp do bloqueio e o atraso entre os sinais. A associação indica apenas força bruta seguida por bloqueio dentro da janela, sem provar causalidade. Eventos de ciclo de vida não participam. A implementação é direta e não introduz engine, registry ou hierarquia genérica de correlação.
+
 ## Resultados e erros
 
-Os resultados Linux e Windows são dataclasses imutáveis com contagens, erros recuperáveis e findings separados por detector. Resultados Windows mantêm coleções e contagens separadas para lockout e lifecycle; `parsed_event_count` continua contando apenas autenticações normalizadas.
+Os resultados Linux e Windows são dataclasses imutáveis com contagens, erros recuperáveis e findings separados por detector. Resultados Windows mantêm coleções e contagens separadas para lockout, lifecycle e correlação brute-force/lockout; `parsed_event_count` continua contando apenas autenticações normalizadas.
 
 Falhas de filesystem e decoding não são confundidas com registros malformados. Na CLI, uma análise concluída retorna `0`, mesmo com findings ou erros recuperáveis. Falhas operacionais retornam `1`, e argumentos ou configurações inválidas retornam `2`. Mensagens de erro não reproduzem a linha ou o objeto bruto potencialmente sensível.
 
@@ -110,9 +119,9 @@ Falhas de filesystem e decoding não são confundidas com registros malformados.
 
 A camada `reporting` recebe um resultado de análise concluído e permanece a jusante de ingestão, normalização e detecção. Ela não altera eventos nem findings.
 
-O JSON representa o resultado completo com `report_version` 1, origem, resumo, erros recuperáveis e categorias de findings. Resultados Windows acrescentam contagens e coleções `account_lockouts` e `account_lifecycle` para observações diretas. O CSV representa somente findings heurísticos e deliberadamente não converte observações em `finding_type`.
+O JSON representa o resultado completo com `report_version` 1, origem, resumo, erros recuperáveis e categorias de findings. Resultados Windows acrescentam `account_lockouts` e `account_lifecycle` para observações diretas e `brute_force_account_lockout` para findings correlacionados. O CSV representa findings heurísticos e correlacionados, mas deliberadamente não converte observações diretas em `finding_type`.
 
-`report_version` permanece em 1 porque as coleções de observações e suas contagens são extensões aditivas para fontes Windows. Nenhuma chave existente foi removida ou reinterpretada, e o contrato CSV não mudou.
+`report_version` permanece em 1 porque as novas coleção, contagem e colunas CSV são extensões aditivas. Nenhuma chave ou coluna existente foi removida ou reinterpretada.
 
 Ambos usam UTF-8 e timestamps ISO 8601 sem conversão para o timezone da máquina. A gravação ocorre primeiro em arquivo temporário no diretório de destino e depois por substituição atômica. Destinos existentes são preservados por padrão e só podem ser substituídos por solicitação explícita.
 
