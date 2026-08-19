@@ -1,0 +1,47 @@
+[
+  {
+    "event_id": 4720,
+    "timestamp": "2026-08-19T14:00:00-03:00",
+    "username": "DemoLifecycleUser",
+    "target_domain": "DEMO-LAB",
+    "subject_username": "DemoAdministrator",
+    "subject_domain": "DEMO-LAB",
+    "recording_computer": "DEMO-DC01.example.invalid"
+  },
+  {
+    "event_id": 4722,
+    "timestamp": "2026-08-19T14:01:00-03:00",
+    "username": "DemoLifecycleUser",
+    "target_domain": "DEMO-LAB",
+    "subject_username": "DemoAdministrator",
+    "subject_domain": "DEMO-LAB",
+    "recording_computer": "DEMO-DC01.example.invalid"
+  },
+  {
+    "event_id": 4725,
+    "timestamp": "2026-08-19T14:02:00-03:00",
+    "username": "DemoLifecycleUser",
+    "target_domain": "DEMO-LAB",
+    "subject_username": "DemoAdministrator",
+    "subject_domain": "DEMO-LAB",
+    "recording_computer": "DEMO-DC01.example.invalid"
+  },
+  {
+    "event_id": 4767,
+    "timestamp": "2026-08-19T14:03:00-03:00",
+    "username": "DemoLifecycleUser",
+    "target_domain": "DEMO-LAB",
+    "subject_username": "DemoAdministrator",
+    "subject_domain": "DEMO-LAB",
+    "recording_computer": "DEMO-DC01.example.invalid"
+  },
+  {
+    "event_id": 4726,
+    "timestamp": "2026-08-19T14:04:00-03:00",
+    "username": "DemoLifecycleUser",
+    "target_domain": "DEMO-LAB",
+    "subject_username": "DemoAdministrator",
+    "subject_domain": "DEMO-LAB",
+    "recording_computer": "DEMO-DC01.example.invalid"
+  }
+]

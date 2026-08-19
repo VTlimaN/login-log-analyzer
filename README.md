@@ -7,7 +7,7 @@ A versão declarada no pacote é `0.1.0`. O repositório está preparado como ca
 ## Capacidades atuais
 
 - parsing de autenticação por senha do OpenSSH em logs Linux tradicionais;
-- normalização dos Windows Security Event IDs 4624, 4625 e 4740 a partir de JSON estruturado ou coleta nativa local;
+- normalização de autenticações Windows 4624/4625, bloqueios 4740 e eventos de ciclo de vida 4720/4722/4725/4726/4767 a partir de JSON estruturado ou coleta nativa local;
 - detecção de força bruta, password spraying, login fora do horário, login bem-sucedido após falhas repetidas e múltiplos IPs de origem contra uma conta;
 - pipelines de análise de arquivo com erros recuperáveis estruturados;
 - comandos de terminal para análise Linux, Windows JSON e Windows Security Event Log;
@@ -22,15 +22,21 @@ Os cinco detectores operam sobre `AuthenticationEvent`, sem depender da sintaxe 
 - **Login bem-sucedido após falhas repetidas:** sucesso precedido por uma quantidade configurável de falhas para o mesmo username exato e IP dentro da janela configurada. É um indicador heurístico de possível adivinhação bem-sucedida de credenciais, não uma prova de comprometimento.
 - **Múltiplos IPs de origem contra uma conta:** falhas contra o mesmo username exato a partir de vários IPs distintos dentro de uma janela configurável. É um indicador heurístico que pode refletir ataques distribuídos, rotação de proxies, bots ou infraestrutura compartilhada; não prova intenção maliciosa.
 
-Separadamente dos findings heurísticos, o projeto normaliza o Windows Event ID 4740 como `AccountLockoutEvent`. Esse evento é uma observação direta de que o Windows registrou um bloqueio de conta; ele não é convertido em falha de autenticação e não prova que o bloqueio teve causa maliciosa.
+Separadamente dos findings heurísticos, o projeto mantém duas famílias de observações diretas do Windows:
+
+- **Bloqueio de conta:** Event ID 4740 normalizado como `AccountLockoutEvent`.
+- **Ciclo de vida de conta:** Event IDs 4720 (criada), 4722 (habilitada), 4725 (desabilitada), 4726 (excluída) e 4767 (desbloqueada), normalizados como `AccountLifecycleEvent` com `AccountLifecycleAction` explícita.
+
+Essas observações registram transições reportadas pelo sistema operacional. Elas não são convertidas em falhas de autenticação, não entram nos detectores e não provam atividade maliciosa por si sós.
 
 ## Arquitetura
 
 ```text
-arquivo Linux --------> parser OpenSSH ---------------------> AuthenticationEvent -> detectores ----\
-arquivo Windows JSON -> roteamento -> 4624/4625 -> parser autenticação -----------------------------> resultado
-                              \-----> 4740 -> parser de bloqueio -> AccountLockoutEvent ------------/
-Windows Security Log -> coletor XML wevtutil -> mesmo roteamento Windows
+arquivo Linux --------> parser OpenSSH ---------------------> AuthenticationEvent -> detectores --------\
+arquivo Windows JSON -> roteamento -> 4624/4625 -> parser autenticação -------------------------------> resultado
+                              |-----> 4740 -> parser de bloqueio -> AccountLockoutEvent ---------------/
+                              \-----> lifecycle IDs -> parser lifecycle -> AccountLifecycleEvent -----/
+Windows Security Log -> coletor XML wevtutil -> mesmo roteamento explícito Windows
 ```
 
 Os parsers traduzem formatos específicos, o evento normalizado fornece uma representação comum, os detectores contêm as regras de segurança e os analisadores de arquivo coordenam o fluxo. A CLI apenas recebe configuração, compõe esses componentes e apresenta o resultado.
@@ -91,7 +97,7 @@ O offset aceita o formato `+HH:MM` ou `-HH:MM`. Usar `--timezone-offset=-03:00` 
 
 ### Windows JSON
 
-O comando Windows recebe um array JSON em UTF-8. Eventos 4624/4625 usam `event_id`, `timestamp`, `username` e, opcionalmente, `source_ip`. Eventos 4740 usam `username` e podem incluir `target_domain`, `caller_computer` e `recording_computer`:
+O comando Windows recebe um array JSON em UTF-8. Eventos 4624/4625 usam `event_id`, `timestamp`, `username` e, opcionalmente, `source_ip`. Eventos 4740 usam `username` e podem incluir `target_domain`, `caller_computer` e `recording_computer`. Eventos de ciclo de vida usam `username` como conta alvo e podem incluir `target_domain`, `subject_username`, `subject_domain` e `recording_computer`:
 
 ```json
 [
@@ -109,13 +115,14 @@ O timestamp ISO 8601 já precisa incluir seu offset, portanto o comando não rec
 ```powershell
 python -m login_log_analyzer analyze-windows .\samples\windows_auth.json
 python -m login_log_analyzer analyze-windows .\samples\windows_account_lockout.json
+python -m login_log_analyzer analyze-windows .\samples\windows_account_lifecycle.json
 ```
 
 Esse caminho permanece útil para análise portátil ou offline de eventos previamente extraídos.
 
 ### Windows Security Event Log nativo
 
-Em Windows, o comando nativo consulta diretamente o log `Security` local por meio do `wevtutil`. A consulta é somente leitura, solicita XML estruturado e limita os resultados aos Event IDs 4624, 4625 e 4740:
+Em Windows, o comando nativo consulta diretamente o log `Security` local por meio do `wevtutil`. A consulta é somente leitura, solicita XML estruturado e limita os resultados aos Event IDs 4624, 4625, 4720, 4722, 4725, 4726, 4740 e 4767:
 
 ```powershell
 python -m login_log_analyzer analyze-windows-native
@@ -138,7 +145,7 @@ Os três comandos compartilham os seguintes defaults e opções de detecção:
 
 Weekdays usam `mon,tue,wed,thu,fri,sat,sun`; horários usam `HH:MM` em formato de 24 horas. O início do horário permitido é inclusivo e o fim é exclusivo. Consulte o `--help` do subcomando para a lista autoritativa de opções.
 
-O relatório mostra contagens de entrada, eventos normalizados, entradas não suportadas, erros recuperáveis e findings heurísticos. Nos comandos Windows, bloqueios de conta observados aparecem com contagem e seção próprias, incluindo domínio e computadores quando disponíveis. Linhas ou objetos malformados não são reproduzidos no terminal.
+O relatório mostra contagens de entrada, eventos normalizados, entradas não suportadas, erros recuperáveis e findings heurísticos. Nos comandos Windows, bloqueios e eventos de ciclo de vida aparecem em contagens e seções próprias, com conta alvo, ação e contexto disponível. Linhas ou objetos malformados não são reproduzidos no terminal.
 
 Os códigos de saída são:
 
@@ -155,11 +162,11 @@ python -m login_log_analyzer analyze-linux .\samples\demo_linux_attack.log --yea
 python -m login_log_analyzer analyze-windows .\samples\demo_windows_attack.json --output-json .\windows-report.json --output-csv .\windows-findings.csv
 ```
 
-O JSON é o relatório estruturado completo: inclui resumo, erros recuperáveis, todas as categorias de findings e, para fontes Windows, a coleção `account_lockouts`. O CSV permanece uma tabela plana exclusivamente de findings heurísticos; observações diretas de bloqueio não são transformadas artificialmente em linhas `finding_type`. Um CSV sem findings contém somente o cabeçalho.
+O JSON é o relatório estruturado completo: inclui resumo, erros recuperáveis, todas as categorias de findings e, para fontes Windows, as coleções `account_lockouts` e `account_lifecycle`. Ações de ciclo de vida usam os valores estáveis `created`, `enabled`, `disabled`, `deleted` e `unlocked`. O CSV permanece uma tabela plana exclusivamente de findings heurísticos; observações diretas não são transformadas artificialmente em linhas `finding_type`. Um CSV sem findings contém somente o cabeçalho.
 
 Por segurança, um destino existente é rejeitado. `--overwrite` permite sua substituição explícita. Os destinos JSON e CSV devem ser diferentes e seus diretórios-pai precisam existir.
 
-O contrato usa `report_version` igual a `1`. Os identificadores de origem são `linux_file`, `windows_json` e `windows_native`; os tipos de finding são `brute_force`, `off_hours`, `password_spray`, `successful_login_after_failures` e `multiple_source_ips`. A adição de `account_lockouts` é uma extensão JSON aditiva e não altera esses identificadores nem a semântica do CSV. Timestamps permanecem em ISO 8601 com seus offsets; campos opcionais ausentes de lockout são `null`.
+O contrato usa `report_version` igual a `1`. Os identificadores de origem são `linux_file`, `windows_json` e `windows_native`; os tipos de finding são `brute_force`, `off_hours`, `password_spray`, `successful_login_after_failures` e `multiple_source_ips`. As coleções de observações Windows são extensões JSON aditivas e não alteram esses identificadores nem a semântica do CSV. Timestamps permanecem em ISO 8601 com seus offsets; contextos opcionais ausentes são `null`.
 
 ## Demonstração reproduzível
 
@@ -168,6 +175,7 @@ As amostras de ataque são sintéticas e foram construídas para acionar os trê
 ```powershell
 python -m login_log_analyzer analyze-linux .\samples\demo_linux_attack.log --year 2026 --timezone-offset=-03:00
 python -m login_log_analyzer analyze-windows .\samples\demo_windows_attack.json
+python -m login_log_analyzer analyze-windows .\samples\windows_account_lifecycle.json
 ```
 
 Em cada comando, o resumo esperado contém 10 eventos de autenticação e um achado em cada categoria:
@@ -208,7 +216,8 @@ Os testes cobrem modelos, parsers, regras, pipelines, CLI e as amostras de demon
 - timestamps Linux tradicionais exigem ano e offset explícitos na CLI;
 - a coleta nativa funciona somente no Windows e depende do acesso da conta ao Security log local;
 - o formato JSON continua sendo necessário para análise Windows portátil ou offline;
-- somente os Event IDs 4624, 4625 e 4740 são normalizados;
+- os Event IDs Windows normalizados são 4624, 4625, 4720, 4722, 4725, 4726, 4740 e 4767;
+- eventos 4723/4724 de senha e o evento genérico 4738 de alteração de conta não são suportados;
 - arquivos EVTX não são lidos e não existe coleta de computadores remotos;
 - as regras são heurísticas configuráveis e não mantêm estado persistente de incidentes;
 - não há baseline comportamental, machine learning, threat intelligence ou GeoIP;

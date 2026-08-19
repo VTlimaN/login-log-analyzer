@@ -6,6 +6,7 @@ from ipaddress import ip_address
 
 import pytest
 
+from login_log_analyzer.account_lifecycle import AccountLifecycleAction
 from login_log_analyzer.authentication import (
     AuthenticationOutcome,
     AuthenticationPlatform,
@@ -19,6 +20,9 @@ from login_log_analyzer.success_after_failures import (
 )
 from login_log_analyzer.windows_authentication import WindowsAuthenticationParser
 from login_log_analyzer.windows_account_lockout import WindowsAccountLockoutParser
+from login_log_analyzer.windows_account_lifecycle import (
+    WindowsAccountLifecycleParser,
+)
 from login_log_analyzer.windows_native_analysis import (
     WINDOWS_SECURITY_QUERY,
     WindowsEventLogCollector,
@@ -42,6 +46,7 @@ def create_event_xml(
     username: str | None = "TargetAccount",
     source_ip: str | None = "192.0.2.25",
     subject_username: str = "SYSTEM",
+    subject_domain: str | None = None,
     target_domain: str | None = None,
     caller_computer: str | None = None,
     recording_computer: str | None = None,
@@ -66,6 +71,11 @@ def create_event_xml(
         if caller_computer is not None
         else ""
     )
+    subject_domain_data = (
+        f'<Data Name="SubjectDomainName">{subject_domain}</Data>'
+        if subject_domain is not None
+        else ""
+    )
     computer_data = (
         f"<Computer>{recording_computer}</Computer>"
         if recording_computer is not None
@@ -80,6 +90,7 @@ def create_event_xml(
         "</System>"
         "<EventData>"
         f'<Data Name="SubjectUserName">{subject_username}</Data>'
+        f"{subject_domain_data}"
         f"{target_data}{source_data}{target_domain_data}{caller_computer_data}"
         "</EventData>"
         "</Event>"
@@ -118,6 +129,7 @@ def create_recording_analyzer(
         collector=collector,
         windows_parser=WindowsAuthenticationParser(),
         account_lockout_parser=WindowsAccountLockoutParser(),
+        account_lifecycle_parser=WindowsAccountLifecycleParser(),
         brute_force_detector=detector,
         off_hours_detector=RecordingDetector(),
         password_spray_detector=RecordingDetector(),
@@ -134,6 +146,7 @@ def create_detection_analyzer(
         collector=StaticCollector(records),
         windows_parser=WindowsAuthenticationParser(),
         account_lockout_parser=WindowsAccountLockoutParser(),
+        account_lifecycle_parser=WindowsAccountLifecycleParser(),
         brute_force_detector=BruteForceDetector(
             failure_threshold=3,
             window=timedelta(minutes=5),
@@ -189,6 +202,10 @@ def test_collector_queries_supported_security_events_safely(
     assert "EventID=4624" in WINDOWS_SECURITY_QUERY
     assert "EventID=4625" in WINDOWS_SECURITY_QUERY
     assert "EventID=4740" in WINDOWS_SECURITY_QUERY
+    for event_id in (4720, 4722, 4725, 4726, 4767):
+        assert f"EventID={event_id}" in WINDOWS_SECURITY_QUERY
+    for deferred_event_id in (4723, 4724, 4738):
+        assert f"EventID={deferred_event_id}" not in WINDOWS_SECURITY_QUERY
     assert "/c:25" in command
     assert "/f:xml" in command
     assert isinstance(options, dict)
@@ -445,6 +462,108 @@ def test_native_malformed_lockout_is_recoverable() -> None:
     assert len(detector.events) == 1
 
 
+@pytest.mark.parametrize(
+    ("event_id", "action"),
+    [
+        (4720, AccountLifecycleAction.CREATED),
+        (4722, AccountLifecycleAction.ENABLED),
+        (4725, AccountLifecycleAction.DISABLED),
+        (4726, AccountLifecycleAction.DELETED),
+        (4767, AccountLifecycleAction.UNLOCKED),
+    ],
+)
+def test_native_extracts_account_lifecycle_fields(
+    event_id: int,
+    action: AccountLifecycleAction,
+) -> None:
+    analyzer, _, detector = create_recording_analyzer(
+        (
+            create_record(
+                event_id=event_id,
+                username="TargetUser",
+                target_domain="LAB",
+                subject_username="Administrator",
+                subject_domain="LAB",
+                recording_computer="DC01.lab.invalid",
+            ),
+        )
+    )
+
+    result = analyzer.analyze()
+
+    assert detector.events == ()
+    assert result.parsed_event_count == 0
+    assert result.account_lifecycle_count == 1
+    event = result.account_lifecycle_events[0]
+    assert event.action is action
+    assert event.username == "TargetUser"
+    assert event.target_domain == "LAB"
+    assert event.subject_username == "Administrator"
+    assert event.subject_domain == "LAB"
+    assert event.recording_computer == "DC01.lab.invalid"
+    assert event.timestamp.utcoffset() == timedelta(0)
+
+
+def test_native_lifecycle_allows_missing_optional_context() -> None:
+    analyzer, _, _ = create_recording_analyzer(
+        (
+            create_record(
+                event_id=4725,
+                target_domain=None,
+                subject_username="",
+                subject_domain=None,
+                recording_computer=None,
+            ),
+        )
+    )
+
+    event = analyzer.analyze().account_lifecycle_events[0]
+
+    assert event.target_domain is None
+    assert event.subject_username is None
+    assert event.subject_domain is None
+    assert event.recording_computer is None
+
+
+def test_native_mixed_families_preserve_counts_and_detector_isolation() -> None:
+    analyzer, _, detector = create_recording_analyzer(
+        (
+            create_record(event_id=4624),
+            create_record(event_id=4625),
+            create_record(event_id=4740),
+            create_record(event_id=4720),
+            create_record(event_id=4767),
+        )
+    )
+
+    result = analyzer.analyze()
+
+    assert result.collected_record_count == 5
+    assert result.parsed_event_count == 2
+    assert result.account_lockout_count == 1
+    assert result.account_lifecycle_count == 2
+    assert len(detector.events) == 2
+
+
+def test_native_malformed_lifecycle_is_recoverable() -> None:
+    analyzer, _, detector = create_recording_analyzer(
+        (
+            create_record(event_id=4720, username=None),
+            create_record(event_id=4722, username="LaterUser"),
+            create_record(event_id=4625),
+        )
+    )
+
+    result = analyzer.analyze()
+
+    assert result.record_error_count == 1
+    assert result.record_errors[0].record_number == 1
+    assert "username" in result.record_errors[0].message
+    assert result.account_lifecycle_count == 1
+    assert result.account_lifecycle_events[0].username == "LaterUser"
+    assert len(detector.events) == 1
+
+
 def test_analyzer_continues_after_malformed_individual_event() -> None:
     analyzer, _, detector = create_recording_analyzer(
         (create_record(username=None), create_record(username="ValidTarget"))
@@ -507,6 +626,7 @@ def test_native_result_and_record_errors_are_immutable() -> None:
     assert isinstance(result.successful_login_after_failures_findings, tuple)
     assert isinstance(result.multiple_source_ips_findings, tuple)
     assert isinstance(result.account_lockout_events, tuple)
+    assert isinstance(result.account_lifecycle_events, tuple)
     with pytest.raises(FrozenInstanceError):
         result.collected_record_count = 2
     with pytest.raises(FrozenInstanceError):

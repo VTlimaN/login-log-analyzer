@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from login_log_analyzer.brute_force import BruteForceDetector
+from login_log_analyzer.account_lifecycle import AccountLifecycleAction
 from login_log_analyzer.multiple_source_ips import MultipleSourceIPsDetector
 from login_log_analyzer.off_hours import OffHoursLoginDetector
 from login_log_analyzer.password_spray import PasswordSprayDetector
@@ -14,6 +15,9 @@ from login_log_analyzer.success_after_failures import (
 )
 from login_log_analyzer.windows_authentication import WindowsAuthenticationParser
 from login_log_analyzer.windows_account_lockout import WindowsAccountLockoutParser
+from login_log_analyzer.windows_account_lifecycle import (
+    WindowsAccountLifecycleParser,
+)
 from login_log_analyzer.windows_json_analysis import (
     WindowsJsonAnalysisResult,
     WindowsJsonFileAnalyzer,
@@ -30,6 +34,7 @@ def create_analyzer(
     return WindowsJsonFileAnalyzer(
         windows_parser=WindowsAuthenticationParser(),
         account_lockout_parser=WindowsAccountLockoutParser(),
+        account_lifecycle_parser=WindowsAccountLifecycleParser(),
         brute_force_detector=BruteForceDetector(
             failure_threshold=brute_force_threshold,
             window=timedelta(minutes=5),
@@ -88,6 +93,8 @@ def test_analyzes_valid_empty_array(tmp_path: Path) -> None:
     assert result.multiple_source_ips_findings == ()
     assert result.account_lockout_events == ()
     assert result.account_lockout_count == 0
+    assert result.account_lifecycle_events == ()
+    assert result.account_lifecycle_count == 0
 
 
 def test_empty_file_is_invalid_json(tmp_path: Path) -> None:
@@ -234,6 +241,115 @@ def test_lockouts_are_not_passed_to_authentication_detectors(tmp_path: Path) -> 
     assert result.parsed_event_count == 0
     assert result.account_lockout_count == 6
     assert result.brute_force_findings == ()
+    assert result.password_spray_findings == ()
+    assert result.successful_login_after_failures_findings == ()
+    assert result.multiple_source_ips_findings == ()
+
+
+@pytest.mark.parametrize(
+    ("event_id", "action"),
+    [
+        (4720, AccountLifecycleAction.CREATED),
+        (4722, AccountLifecycleAction.ENABLED),
+        (4725, AccountLifecycleAction.DISABLED),
+        (4726, AccountLifecycleAction.DELETED),
+        (4767, AccountLifecycleAction.UNLOCKED),
+    ],
+)
+def test_parses_account_lifecycle_records(
+    tmp_path: Path,
+    event_id: int,
+    action: AccountLifecycleAction,
+) -> None:
+    path = tmp_path / f"lifecycle-{event_id}.json"
+    write_document(
+        path,
+        [
+            create_record(
+                event_id=event_id,
+                username="TargetUser",
+                target_domain="LAB",
+                subject_username="Administrator",
+                subject_domain="LAB",
+                recording_computer="DC01.lab.invalid",
+            )
+        ],
+    )
+
+    result = create_analyzer().analyze(path)
+
+    assert result.parsed_event_count == 0
+    assert result.account_lifecycle_count == 1
+    event = result.account_lifecycle_events[0]
+    assert event.action is action
+    assert event.username == "TargetUser"
+    assert event.target_domain == "LAB"
+    assert event.subject_username == "Administrator"
+    assert event.subject_domain == "LAB"
+    assert event.recording_computer == "DC01.lab.invalid"
+    assert event.timestamp.utcoffset() == timedelta(hours=-3)
+
+
+def test_mixed_normalized_families_preserve_independent_counts(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "all-families.json"
+    write_document(
+        path,
+        [
+            create_record(event_id=4624),
+            create_record(event_id=4625),
+            create_record(event_id=4740),
+            create_record(event_id=4720),
+            create_record(event_id=4767),
+            {"event_id": 4738},
+        ],
+    )
+
+    result = create_analyzer().analyze(path)
+
+    assert result.total_records == 6
+    assert result.parsed_event_count == 2
+    assert result.account_lockout_count == 1
+    assert result.account_lifecycle_count == 2
+    assert result.unsupported_record_count == 1
+
+
+def test_malformed_lifecycle_is_recoverable_and_later_record_continues(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "recoverable-lifecycle.json"
+    malformed = create_record(event_id=4720)
+    del malformed["username"]
+    write_document(
+        path,
+        [malformed, create_record(event_id=4722, username="LaterUser")],
+    )
+
+    result = create_analyzer().analyze(path)
+
+    assert result.record_error_count == 1
+    assert result.record_errors[0].record_number == 1
+    assert "username" in result.record_errors[0].message
+    assert result.account_lifecycle_count == 1
+    assert result.account_lifecycle_events[0].username == "LaterUser"
+
+
+def test_lifecycle_events_are_isolated_from_authentication_detectors(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "lifecycle-isolation.json"
+    write_document(
+        path,
+        [create_record(event_id=event_id) for event_id in (4720, 4722, 4725, 4726, 4767)],
+    )
+
+    result = create_analyzer().analyze(path)
+
+    assert result.parsed_event_count == 0
+    assert result.account_lifecycle_count == 5
+    assert result.brute_force_findings == ()
+    assert result.off_hours_findings == ()
     assert result.password_spray_findings == ()
     assert result.successful_login_after_failures_findings == ()
     assert result.multiple_source_ips_findings == ()
@@ -506,6 +622,7 @@ def test_result_and_record_errors_are_immutable(tmp_path: Path) -> None:
     assert isinstance(result.successful_login_after_failures_findings, tuple)
     assert isinstance(result.multiple_source_ips_findings, tuple)
     assert isinstance(result.account_lockout_events, tuple)
+    assert isinstance(result.account_lifecycle_events, tuple)
     with pytest.raises(FrozenInstanceError):
         result.total_records = 2
     with pytest.raises(FrozenInstanceError):

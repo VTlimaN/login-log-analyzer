@@ -5,6 +5,7 @@ import os
 import tempfile
 from pathlib import Path
 
+from login_log_analyzer.account_lifecycle import AccountLifecycleEvent
 from login_log_analyzer.account_lockout import AccountLockoutEvent
 from login_log_analyzer.brute_force import BruteForceFinding
 from login_log_analyzer.linux_file_analysis import LinuxLogAnalysisResult
@@ -144,6 +145,10 @@ def _json_document(result: AnalysisResult) -> dict[str, object]:
             _account_lockout_json(event)
             for event in result.account_lockout_events
         ]
+        document["account_lifecycle"] = [
+            _account_lifecycle_json(event)
+            for event in result.account_lifecycle_events
+        ]
     return document
 
 
@@ -173,6 +178,7 @@ def _source_data(
                 "unsupported_record_count": result.unsupported_record_count,
                 "record_error_count": result.record_error_count,
                 "account_lockout_count": result.account_lockout_count,
+                "account_lifecycle_count": result.account_lifecycle_count,
             },
             [
                 {"record_number": error.record_number, "message": error.message}
@@ -188,6 +194,7 @@ def _source_data(
                 "unsupported_record_count": result.unsupported_record_count,
                 "record_error_count": result.record_error_count,
                 "account_lockout_count": result.account_lockout_count,
+                "account_lifecycle_count": result.account_lifecycle_count,
             },
             [
                 {"record_number": error.record_number, "message": error.message}
@@ -249,6 +256,21 @@ def _account_lockout_json(event: AccountLockoutEvent) -> dict[str, object]:
         "platform": event.platform.value,
         "target_domain": event.target_domain,
         "caller_computer": event.caller_computer,
+        "recording_computer": event.recording_computer,
+    }
+
+
+def _account_lifecycle_json(
+    event: AccountLifecycleEvent,
+) -> dict[str, object]:
+    return {
+        "timestamp": event.timestamp.isoformat(),
+        "username": event.username,
+        "action": event.action.value,
+        "platform": event.platform.value,
+        "target_domain": event.target_domain,
+        "subject_username": event.subject_username,
+        "subject_domain": event.subject_domain,
         "recording_computer": event.recording_computer,
     }
 
