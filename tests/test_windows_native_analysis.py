@@ -206,7 +206,8 @@ def test_collector_queries_supported_security_events_safely(
     command = invocation["command"]
     options = invocation["options"]
     assert isinstance(command, list)
-    assert command[:3] == ["wevtutil", "qe", "Security"]
+    assert command[0].endswith(r"Windows\System32\wevtutil.exe")
+    assert command[1:3] == ["qe", "Security"]
     assert f"/q:{WINDOWS_SECURITY_QUERY}" in command
     assert "EventID=4624" in WINDOWS_SECURITY_QUERY
     assert "EventID=4625" in WINDOWS_SECURITY_QUERY
@@ -270,6 +271,25 @@ def test_collector_rejects_unsupported_platform(
 def test_collector_rejects_invalid_event_limit(max_events: object) -> None:
     with pytest.raises(ValueError, match="positive integer"):
         WindowsEventLogCollector().collect(max_events)
+
+
+def test_collector_rejects_unsupported_xml_declarations() -> None:
+    output = '<!DOCTYPE Events [<!ENTITY injected "value">]><Events />'
+
+    with pytest.raises(WindowsNativeOutputError, match="unsupported XML"):
+        WindowsEventLogCollector._parse_output(output)
+
+
+def test_collector_rejects_excessive_xml_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "login_log_analyzer.windows_native_analysis.MAX_WINDOWS_NATIVE_OUTPUT_CHARACTERS",
+        8,
+    )
+
+    with pytest.raises(WindowsNativeOutputError, match="safety limit"):
+        WindowsEventLogCollector._parse_output("<Events />")
 
 
 def test_collector_reports_unavailable_wevtutil(

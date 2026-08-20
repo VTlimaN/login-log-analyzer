@@ -28,6 +28,17 @@ from login_log_analyzer.success_after_failures import (
 )
 
 
+MAX_LINUX_LOG_FILE_BYTES = 100 * 1024 * 1024
+MAX_LINUX_LOG_LINES = 1_000_000
+MAX_LINUX_AUTHENTICATION_EVENTS = 100_000
+MAX_LINUX_PARSE_ERRORS = 100_000
+MAX_LINUX_LOG_LINE_CHARACTERS = 65_536
+
+
+class LinuxLogInputLimitError(OSError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class LinuxLogParseError:
     line_number: int
@@ -74,14 +85,37 @@ class LinuxLogFileAnalyzer:
         self._multiple_source_ips_detector = multiple_source_ips_detector
 
     def analyze(self, path: Path) -> LinuxLogAnalysisResult:
+        if path.stat().st_size > MAX_LINUX_LOG_FILE_BYTES:
+            raise LinuxLogInputLimitError(
+                f"Linux log exceeds the {MAX_LINUX_LOG_FILE_BYTES}-byte limit"
+            )
+
         events: list[AuthenticationEvent] = []
         parse_errors: list[LinuxLogParseError] = []
         total_lines = 0
+        total_characters = 0
         unsupported_line_count = 0
 
         with path.open("r", encoding="utf-8", newline="") as log_file:
-            for line_number, raw_line in enumerate(log_file, start=1):
-                total_lines = line_number
+            while True:
+                raw_line = log_file.readline(MAX_LINUX_LOG_LINE_CHARACTERS + 1)
+                if not raw_line:
+                    break
+                total_lines += 1
+                total_characters += len(raw_line)
+                if len(raw_line) > MAX_LINUX_LOG_LINE_CHARACTERS:
+                    raise LinuxLogInputLimitError(
+                        "Linux log line exceeds the "
+                        f"{MAX_LINUX_LOG_LINE_CHARACTERS}-character limit"
+                    )
+                if total_characters > MAX_LINUX_LOG_FILE_BYTES:
+                    raise LinuxLogInputLimitError(
+                        f"Linux log exceeds the {MAX_LINUX_LOG_FILE_BYTES}-character limit"
+                    )
+                if total_lines > MAX_LINUX_LOG_LINES:
+                    raise LinuxLogInputLimitError(
+                        f"Linux log exceeds the {MAX_LINUX_LOG_LINES}-line limit"
+                    )
                 line = self._remove_line_ending(raw_line)
 
                 try:
@@ -89,16 +123,27 @@ class LinuxLogFileAnalyzer:
                 except LinuxAuthenticationParseError as error:
                     parse_errors.append(
                         LinuxLogParseError(
-                            line_number=line_number,
+                            line_number=total_lines,
                             message=str(error),
                         )
                     )
+                    if len(parse_errors) > MAX_LINUX_PARSE_ERRORS:
+                        raise LinuxLogInputLimitError(
+                            "Linux log exceeds the "
+                            f"{MAX_LINUX_PARSE_ERRORS}-parse-error limit"
+                        )
                     continue
 
                 if event is None:
                     unsupported_line_count += 1
                 else:
                     events.append(event)
+                    if len(events) > MAX_LINUX_AUTHENTICATION_EVENTS:
+                        raise LinuxLogInputLimitError(
+                            "Linux log exceeds the "
+                            f"{MAX_LINUX_AUTHENTICATION_EVENTS}"
+                            "-authentication-event limit"
+                        )
 
         normalized_events = tuple(events)
 

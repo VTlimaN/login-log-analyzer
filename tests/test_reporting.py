@@ -484,7 +484,27 @@ def test_removes_temporary_file_when_atomic_replace_fails(
     monkeypatch.setattr("login_log_analyzer.reporting.os.replace", fail_replace)
 
     with pytest.raises(PermissionError):
-        export_json_report(linux_result(), destination)
+        export_json_report(linux_result(), destination, overwrite=True)
 
     assert not destination.exists()
     assert list(tmp_path.iterdir()) == []
+
+
+def test_no_overwrite_mode_does_not_clobber_racing_destination(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "report.json"
+    original_link = __import__("os").link
+
+    def race_link(source: Path, target: Path) -> None:
+        target.write_text("existing", encoding="utf-8")
+        original_link(source, target)
+
+    monkeypatch.setattr("login_log_analyzer.reporting.os.link", race_link)
+
+    with pytest.raises(FileExistsError):
+        export_json_report(linux_result(), destination)
+
+    assert destination.read_text(encoding="utf-8") == "existing"
+    assert list(tmp_path.iterdir()) == [destination]

@@ -4,6 +4,7 @@ import sys
 import xml.etree.ElementTree as ElementTree
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 from login_log_analyzer.account_lifecycle import AccountLifecycleEvent
 from login_log_analyzer.account_lockout import AccountLockoutEvent
@@ -22,6 +23,7 @@ from login_log_analyzer.password_spray import (
     PasswordSprayDetector,
     PasswordSprayFinding,
 )
+from login_log_analyzer.presentation_security import escape_control_characters
 from login_log_analyzer.success_after_failures import (
     SuccessfulLoginAfterFailuresDetector,
     SuccessfulLoginAfterFailuresFinding,
@@ -44,6 +46,10 @@ from login_log_analyzer.windows_account_lifecycle import (
 
 
 DEFAULT_WINDOWS_NATIVE_EVENT_LIMIT = 100
+MAX_WINDOWS_NATIVE_EVENT_LIMIT = 10_000
+MAX_WINDOWS_NATIVE_OUTPUT_CHARACTERS = 50 * 1024 * 1024
+MAX_WINDOWS_NATIVE_ERROR_DETAIL_CHARACTERS = 1_024
+WINDOWS_SYSTEM_DIRECTORY = Path("C:/Windows/System32")
 WINDOWS_SECURITY_QUERY = (
     "*[System[(EventID=4624 or EventID=4625 or EventID=4720 or EventID=4722 "
     "or EventID=4725 or EventID=4726 or EventID=4740 or EventID=4767)]]"
@@ -131,7 +137,7 @@ class WindowsEventLogCollector:
             )
 
         command = [
-            "wevtutil",
+            str(WINDOWS_SYSTEM_DIRECTORY / "wevtutil.exe"),
             "qe",
             "Security",
             f"/q:{WINDOWS_SECURITY_QUERY}",
@@ -159,7 +165,12 @@ class WindowsEventLogCollector:
             ) from error
 
         if completed_process.returncode != 0:
-            detail = completed_process.stderr.strip()
+            raw_detail = completed_process.stderr.strip()
+            detail = escape_control_characters(
+                raw_detail[:MAX_WINDOWS_NATIVE_ERROR_DETAIL_CHARACTERS]
+            )
+            if len(raw_detail) > MAX_WINDOWS_NATIVE_ERROR_DETAIL_CHARACTERS:
+                detail = f"{detail}... [truncated]"
             message = "Windows Security log query failed"
             if detail:
                 message = f"{message}: {detail}"
@@ -173,16 +184,29 @@ class WindowsEventLogCollector:
             not isinstance(max_events, int)
             or isinstance(max_events, bool)
             or max_events < 1
+            or max_events > MAX_WINDOWS_NATIVE_EVENT_LIMIT
         ):
-            raise ValueError("max_events must be a positive integer")
+            raise ValueError(
+                "max_events must be a positive integer no greater than "
+                f"{MAX_WINDOWS_NATIVE_EVENT_LIMIT}"
+            )
 
     @classmethod
     def _parse_output(cls, output: str) -> tuple[ElementTree.Element, ...]:
+        if len(output) > MAX_WINDOWS_NATIVE_OUTPUT_CHARACTERS:
+            raise WindowsNativeOutputError(
+                "wevtutil output exceeds the configured safety limit"
+            )
         normalized_output = XML_DECLARATION_PATTERN.sub(
             "", output.lstrip("\ufeff")
         ).strip()
         if not normalized_output:
             return ()
+        uppercase_output = normalized_output.upper()
+        if "<!DOCTYPE" in uppercase_output or "<!ENTITY" in uppercase_output:
+            raise WindowsNativeOutputError(
+                "wevtutil returned unsupported XML declarations"
+            )
 
         try:
             root = ElementTree.fromstring(normalized_output)

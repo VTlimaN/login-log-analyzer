@@ -14,6 +14,7 @@ build/
 dist/
 *.egg-info/
 .eggs/
+.analysis-output/
 
 pip-log.txt
 pip-delete-this-directory.txt
@@ -24,4 +25,3 @@ Desktop.ini
 
 .vscode/*.log
 .vscode/.ropeproject/
-

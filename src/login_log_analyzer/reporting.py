@@ -15,6 +15,7 @@ from login_log_analyzer.linux_file_analysis import LinuxLogAnalysisResult
 from login_log_analyzer.multiple_source_ips import MultipleSourceIPsFinding
 from login_log_analyzer.off_hours import OffHoursLoginFinding
 from login_log_analyzer.password_spray import PasswordSprayFinding
+from login_log_analyzer.presentation_security import neutralize_csv_text
 from login_log_analyzer.success_after_failures import (
     SuccessfulLoginAfterFailuresFinding,
 )
@@ -350,7 +351,7 @@ def _brute_force_csv(finding: BruteForceFinding) -> dict[str, object]:
     row.update(
         {
             "finding_type": "brute_force",
-            "username": finding.username,
+            "username": neutralize_csv_text(finding.username),
             "source_ip": str(finding.source_ip),
             "first_observed": finding.first_observed.isoformat(),
             "last_observed": finding.last_observed.isoformat(),
@@ -365,7 +366,7 @@ def _off_hours_csv(finding: OffHoursLoginFinding) -> dict[str, object]:
     row.update(
         {
             "finding_type": "off_hours",
-            "username": finding.username,
+            "username": neutralize_csv_text(finding.username),
             "source_ip": (
                 str(finding.source_ip) if finding.source_ip is not None else ""
             ),
@@ -385,7 +386,9 @@ def _password_spray_csv(finding: PasswordSprayFinding) -> dict[str, object]:
             "first_observed": finding.first_observed.isoformat(),
             "last_observed": finding.last_observed.isoformat(),
             "distinct_username_count": finding.distinct_username_count,
-            "usernames": ";".join(finding.usernames),
+            "usernames": ";".join(
+                neutralize_csv_text(username) for username in finding.usernames
+            ),
         }
     )
     return row
@@ -398,7 +401,7 @@ def _successful_login_after_failures_csv(
     row.update(
         {
             "finding_type": "successful_login_after_failures",
-            "username": finding.username,
+            "username": neutralize_csv_text(finding.username),
             "source_ip": str(finding.source_ip),
             "platform": finding.platform.value,
             "first_failure": finding.first_failure.isoformat(),
@@ -417,7 +420,7 @@ def _multiple_source_ips_csv(
     row.update(
         {
             "finding_type": "multiple_source_ips",
-            "username": finding.username,
+            "username": neutralize_csv_text(finding.username),
             "first_observed": finding.first_observed.isoformat(),
             "last_observed": finding.last_observed.isoformat(),
             "distinct_source_ip_count": finding.distinct_source_ip_count,
@@ -434,7 +437,7 @@ def _brute_force_account_lockout_csv(
     row.update(
         {
             "finding_type": "brute_force_account_lockout",
-            "username": finding.username,
+            "username": neutralize_csv_text(finding.username),
             "source_ip": str(finding.source_ip),
             "first_observed": finding.brute_force_first_failure.isoformat(),
             "last_observed": finding.brute_force_last_failure.isoformat(),
@@ -470,9 +473,16 @@ def _write_text(
             temporary_file.write(content)
             temporary_path = Path(temporary_file.name)
 
-        if not overwrite and destination.exists():
-            raise FileExistsError(f"report destination already exists: {destination}")
-        os.replace(temporary_path, destination)
+        if overwrite:
+            os.replace(temporary_path, destination)
+        else:
+            try:
+                os.link(temporary_path, destination)
+            except FileExistsError as error:
+                raise FileExistsError(
+                    f"report destination already exists: {destination}"
+                ) from error
+            temporary_path.unlink()
         temporary_path = None
     finally:
         if temporary_path is not None:

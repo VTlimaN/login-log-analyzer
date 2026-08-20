@@ -48,6 +48,10 @@ from login_log_analyzer.windows_account_lifecycle import (
 )
 
 
+MAX_WINDOWS_JSON_FILE_BYTES = 50 * 1024 * 1024
+MAX_WINDOWS_JSON_RECORDS = 100_000
+
+
 class WindowsJsonFormatError(ValueError):
     pass
 
@@ -128,11 +132,29 @@ class WindowsJsonFileAnalyzer:
         )
 
     def analyze(self, path: Path) -> WindowsJsonAnalysisResult:
-        with path.open("r", encoding="utf-8") as event_file:
-            document = json.load(event_file)
+        if path.stat().st_size > MAX_WINDOWS_JSON_FILE_BYTES:
+            raise WindowsJsonFormatError(
+                f"Windows JSON exceeds the {MAX_WINDOWS_JSON_FILE_BYTES}-byte limit"
+            )
+
+        with path.open("rb") as event_file:
+            encoded_document = event_file.read(MAX_WINDOWS_JSON_FILE_BYTES + 1)
+        if len(encoded_document) > MAX_WINDOWS_JSON_FILE_BYTES:
+            raise WindowsJsonFormatError(
+                f"Windows JSON exceeds the {MAX_WINDOWS_JSON_FILE_BYTES}-byte limit"
+            )
+
+        try:
+            document = json.loads(encoded_document.decode("utf-8"))
+        except RecursionError as error:
+            raise WindowsJsonFormatError("Windows JSON nesting is too deep") from error
 
         if not isinstance(document, list):
             raise WindowsJsonFormatError("top-level JSON value must be an array")
+        if len(document) > MAX_WINDOWS_JSON_RECORDS:
+            raise WindowsJsonFormatError(
+                f"Windows JSON exceeds the {MAX_WINDOWS_JSON_RECORDS}-record limit"
+            )
 
         events: list[AuthenticationEvent] = []
         account_lockout_events: list[AccountLockoutEvent] = []
