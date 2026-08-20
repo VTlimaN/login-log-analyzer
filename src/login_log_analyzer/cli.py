@@ -31,6 +31,7 @@ from login_log_analyzer.password_spray import (
     PasswordSprayDetector,
     PasswordSprayFinding,
 )
+from login_log_analyzer.presentation_security import escape_control_characters
 from login_log_analyzer.reporting import (
     AnalysisResult,
     ReportConfigurationError,
@@ -52,6 +53,7 @@ from login_log_analyzer.windows_json_analysis import (
 )
 from login_log_analyzer.windows_native_analysis import (
     DEFAULT_WINDOWS_NATIVE_EVENT_LIMIT,
+    MAX_WINDOWS_NATIVE_EVENT_LIMIT,
     WindowsEventLogCollector,
     WindowsNativeAnalysisResult,
     WindowsNativeCollectionError,
@@ -116,7 +118,8 @@ def parse_weekdays(value: str) -> frozenset[int]:
     unknown_names = sorted({name for name in names if name not in WEEKDAY_NUMBERS})
     if unknown_names:
         raise argparse.ArgumentTypeError(
-            f"weekday desconhecido: {', '.join(unknown_names)}"
+            "weekday desconhecido: "
+            f"{escape_control_characters(', '.join(unknown_names))}"
         )
     return frozenset(WEEKDAY_NUMBERS[name] for name in names)
 
@@ -143,6 +146,15 @@ def parse_positive_integer(value: str) -> int:
     if parsed_value < 1:
         raise argparse.ArgumentTypeError(
             "o valor deve ser um número inteiro positivo"
+        )
+    return parsed_value
+
+
+def parse_native_event_limit(value: str) -> int:
+    parsed_value = parse_positive_integer(value)
+    if parsed_value > MAX_WINDOWS_NATIVE_EVENT_LIMIT:
+        raise argparse.ArgumentTypeError(
+            f"o valor deve ser no m\u00e1ximo {MAX_WINDOWS_NATIVE_EVENT_LIMIT}"
         )
     return parsed_value
 
@@ -317,7 +329,7 @@ def create_argument_parser() -> argparse.ArgumentParser:
     )
     windows_native_parser.add_argument(
         "--max-events",
-        type=parse_positive_integer,
+        type=parse_native_event_limit,
         default=DEFAULT_WINDOWS_NATIVE_EVENT_LIMIT,
         help="quantidade máxima de eventos Windows coletados",
     )
@@ -457,7 +469,8 @@ def render_brute_force_findings(
     print("\nForça bruta", file=output)
     for finding in findings:
         print(
-            f"  {finding.username} | {finding.source_ip} | "
+            f"  {escape_control_characters(finding.username)} | "
+            f"{finding.source_ip} | "
             f"{finding.first_observed.isoformat()} -> "
             f"{finding.last_observed.isoformat()} | "
             f"falhas: {finding.failure_count}",
@@ -476,7 +489,8 @@ def render_off_hours_findings(
     for finding in findings:
         source_ip = str(finding.source_ip) if finding.source_ip is not None else "N/A"
         print(
-            f"  {finding.username} | {finding.timestamp.isoformat()} | "
+            f"  {escape_control_characters(finding.username)} | "
+            f"{finding.timestamp.isoformat()} | "
             f"IP: {source_ip} | plataforma: {finding.platform.value}",
             file=output,
         )
@@ -495,7 +509,8 @@ def render_password_spray_findings(
             f"  {finding.source_ip} | {finding.first_observed.isoformat()} -> "
             f"{finding.last_observed.isoformat()} | "
             f"usernames distintos: {finding.distinct_username_count} | "
-            f"usernames: {', '.join(finding.usernames)}",
+            "usernames: "
+            f"{', '.join(escape_control_characters(username) for username in finding.usernames)}",
             file=output,
         )
 
@@ -510,7 +525,8 @@ def render_successful_login_after_failures_findings(
     print("\nLogin bem-sucedido após falhas repetidas", file=output)
     for finding in findings:
         print(
-            f"  {finding.username} | {finding.source_ip} | "
+            f"  {escape_control_characters(finding.username)} | "
+            f"{finding.source_ip} | "
             f"primeira falha: {finding.first_failure.isoformat()} | "
             f"última falha: {finding.last_failure.isoformat()} | "
             f"sucesso: {finding.successful_login.isoformat()} | "
@@ -530,7 +546,8 @@ def render_multiple_source_ips_findings(
     print("\nMúltiplos IPs de origem contra uma conta", file=output)
     for finding in findings:
         print(
-            f"  {finding.username} | {finding.first_observed.isoformat()} -> "
+            f"  {escape_control_characters(finding.username)} | "
+            f"{finding.first_observed.isoformat()} -> "
             f"{finding.last_observed.isoformat()} | "
             f"IPs distintos: {finding.distinct_source_ip_count} | "
             f"IPs: {', '.join(str(source_ip) for source_ip in finding.source_ips)}",
@@ -547,11 +564,14 @@ def render_account_lockout_events(
 
     print("\nBloqueios de conta observados", file=output)
     for event in events:
-        target_domain = event.target_domain or "N/A"
-        caller_computer = event.caller_computer or "N/A"
-        recording_computer = event.recording_computer or "N/A"
+        target_domain = escape_control_characters(event.target_domain or "N/A")
+        caller_computer = escape_control_characters(event.caller_computer or "N/A")
+        recording_computer = escape_control_characters(
+            event.recording_computer or "N/A"
+        )
         print(
-            f"  {event.username} | {event.timestamp.isoformat()} | "
+            f"  {escape_control_characters(event.username)} | "
+            f"{event.timestamp.isoformat()} | "
             f"domínio: {target_domain} | "
             f"computador de origem: {caller_computer} | "
             f"computador de registro: {recording_computer}",
@@ -569,7 +589,8 @@ def render_brute_force_account_lockout_findings(
     print("\nCorrelações de força bruta seguidas por bloqueio", file=output)
     for finding in findings:
         print(
-            f"  {finding.username} | {finding.source_ip} | "
+            f"  {escape_control_characters(finding.username)} | "
+            f"{finding.source_ip} | "
             f"força bruta: {finding.brute_force_first_failure.isoformat()} -> "
             f"{finding.brute_force_last_failure.isoformat()} | "
             f"falhas: {finding.brute_force_failure_count} | "
@@ -595,12 +616,15 @@ def render_account_lifecycle_events(
     }
     print("\nEventos de ciclo de vida de conta observados", file=output)
     for event in events:
-        target_domain = event.target_domain or "N/A"
-        subject_username = event.subject_username or "N/A"
-        subject_domain = event.subject_domain or "N/A"
-        recording_computer = event.recording_computer or "N/A"
+        target_domain = escape_control_characters(event.target_domain or "N/A")
+        subject_username = escape_control_characters(event.subject_username or "N/A")
+        subject_domain = escape_control_characters(event.subject_domain or "N/A")
+        recording_computer = escape_control_characters(
+            event.recording_computer or "N/A"
+        )
         print(
-            f"  {action_labels[event.action]} | {event.username} | "
+            f"  {action_labels[event.action]} | "
+            f"{escape_control_characters(event.username)} | "
             f"{event.timestamp.isoformat()} | domínio alvo: {target_domain} | "
             f"ator: {subject_username} | domínio do ator: {subject_domain} | "
             f"computador de registro: {recording_computer}",
@@ -613,7 +637,7 @@ def render_linux_result(
     result: LinuxLogAnalysisResult,
     output: TextIO,
 ) -> None:
-    print(f"Arquivo analisado: {path}", file=output)
+    print(f"Arquivo analisado: {escape_control_characters(str(path))}", file=output)
     print("Resumo", file=output)
     print(f"  Linhas totais: {result.total_lines}", file=output)
     print(f"  Eventos de autenticação: {result.parsed_event_count}", file=output)
@@ -639,7 +663,11 @@ def render_linux_result(
     if result.parse_errors:
         print("\nErros de parsing", file=output)
         for error in result.parse_errors:
-            print(f"  Linha {error.line_number}: {error.message}", file=output)
+            print(
+                f"  Linha {error.line_number}: "
+                f"{escape_control_characters(error.message)}",
+                file=output,
+            )
 
     render_brute_force_findings(result.brute_force_findings, output)
     render_off_hours_findings(result.off_hours_findings, output)
@@ -656,7 +684,7 @@ def render_windows_result(
     result: WindowsJsonAnalysisResult,
     output: TextIO,
 ) -> None:
-    print(f"Arquivo analisado: {path}", file=output)
+    print(f"Arquivo analisado: {escape_control_characters(str(path))}", file=output)
     print("Resumo Windows", file=output)
     print(f"  Registros totais: {result.total_records}", file=output)
     print(f"  Eventos de autenticação: {result.parsed_event_count}", file=output)
@@ -696,7 +724,11 @@ def render_windows_result(
     if result.record_errors:
         print("\nErros de registro", file=output)
         for error in result.record_errors:
-            print(f"  Registro {error.record_number}: {error.message}", file=output)
+            print(
+                f"  Registro {error.record_number}: "
+                f"{escape_control_characters(error.message)}",
+                file=output,
+            )
 
     render_brute_force_findings(result.brute_force_findings, output)
     render_off_hours_findings(result.off_hours_findings, output)
@@ -757,7 +789,11 @@ def render_windows_native_result(
     if result.record_errors:
         print("\nErros de registro", file=output)
         for error in result.record_errors:
-            print(f"  Registro {error.record_number}: {error.message}", file=output)
+            print(
+                f"  Registro {error.record_number}: "
+                f"{escape_control_characters(error.message)}",
+                file=output,
+            )
 
     render_brute_force_findings(result.brute_force_findings, output)
     render_off_hours_findings(result.off_hours_findings, output)
@@ -793,10 +829,17 @@ def export_requested_reports(
             overwrite=arguments.overwrite,
         )
     except ReportConfigurationError as error:
-        print(f"Erro de configuração de relatório: {error}", file=error_output)
+        print(
+            "Erro de configuração de relatório: "
+            f"{escape_control_characters(str(error))}",
+            file=error_output,
+        )
         return 2
     except OSError as error:
-        print(f"Erro ao salvar relatório: {error}", file=error_output)
+        print(
+            f"Erro ao salvar relatório: {escape_control_characters(str(error))}",
+            file=error_output,
+        )
         return 1
 
     try:
@@ -806,16 +849,27 @@ def export_requested_reports(
                 json_destination,
                 overwrite=arguments.overwrite,
             )
-            print(f"Relatório JSON salvo em: {json_destination}", file=output)
+            print(
+                "Relatório JSON salvo em: "
+                f"{escape_control_characters(str(json_destination))}",
+                file=output,
+            )
         if csv_destination is not None:
             export_csv_report(
                 result,
                 csv_destination,
                 overwrite=arguments.overwrite,
             )
-            print(f"Relatório CSV salvo em: {csv_destination}", file=output)
+            print(
+                "Relatório CSV salvo em: "
+                f"{escape_control_characters(str(csv_destination))}",
+                file=output,
+            )
     except OSError as error:
-        print(f"Erro ao salvar relatório: {error}", file=error_output)
+        print(
+            f"Erro ao salvar relatório: {escape_control_characters(str(error))}",
+            file=error_output,
+        )
         return 1
     return 0
 
@@ -828,13 +882,21 @@ def run_analyze_linux(
     try:
         analyzer = create_linux_analyzer(arguments)
     except (TypeError, ValueError) as error:
-        print(f"Erro de configuração: {error}", file=error_output)
+        print(
+            f"Erro de configuração: {escape_control_characters(str(error))}",
+            file=error_output,
+        )
         return 2
 
     try:
         result = analyzer.analyze(arguments.path)
     except (OSError, UnicodeError) as error:
-        print(f"Erro ao analisar '{arguments.path}': {error}", file=error_output)
+        print(
+            "Erro ao analisar '"
+            f"{escape_control_characters(str(arguments.path))}': "
+            f"{escape_control_characters(str(error))}",
+            file=error_output,
+        )
         return 1
 
     render_linux_result(arguments.path, result, output)
@@ -849,7 +911,10 @@ def run_analyze_windows(
     try:
         analyzer = create_windows_analyzer(arguments)
     except (TypeError, ValueError) as error:
-        print(f"Erro de configuração: {error}", file=error_output)
+        print(
+            f"Erro de configuração: {escape_control_characters(str(error))}",
+            file=error_output,
+        )
         return 2
 
     try:
@@ -860,7 +925,12 @@ def run_analyze_windows(
         json.JSONDecodeError,
         WindowsJsonFormatError,
     ) as error:
-        print(f"Erro ao analisar '{arguments.path}': {error}", file=error_output)
+        print(
+            "Erro ao analisar '"
+            f"{escape_control_characters(str(arguments.path))}': "
+            f"{escape_control_characters(str(error))}",
+            file=error_output,
+        )
         return 1
 
     render_windows_result(arguments.path, result, output)
@@ -875,13 +945,20 @@ def run_analyze_windows_native(
     try:
         analyzer = create_windows_native_analyzer(arguments)
     except (TypeError, ValueError) as error:
-        print(f"Erro de configuração: {error}", file=error_output)
+        print(
+            f"Erro de configuração: {escape_control_characters(str(error))}",
+            file=error_output,
+        )
         return 2
 
     try:
         result = analyzer.analyze(arguments.max_events)
     except WindowsNativeCollectionError as error:
-        print(f"Erro na coleta nativa Windows: {error}", file=error_output)
+        print(
+            "Erro na coleta nativa Windows: "
+            f"{escape_control_characters(str(error))}",
+            file=error_output,
+        )
         return 1
 
     render_windows_native_result(result, output)

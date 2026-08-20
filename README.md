@@ -181,8 +181,9 @@ Os códigos de saída são:
 Todos os comandos de análise aceitam `--output-json PATH` e `--output-csv PATH`. Os formatos podem ser solicitados separadamente ou na mesma execução:
 
 ```powershell
-python -m login_log_analyzer analyze-linux .\samples\demo_linux_attack.log --year 2026 --timezone-offset=-03:00 --output-json .\linux-report.json --output-csv .\linux-findings.csv
-python -m login_log_analyzer analyze-windows .\samples\demo_windows_attack.json --output-json .\windows-report.json --output-csv .\windows-findings.csv
+New-Item -ItemType Directory .analysis-output
+python -m login_log_analyzer analyze-linux .\samples\demo_linux_attack.log --year 2026 --timezone-offset=-03:00 --output-json .\.analysis-output\linux-report.json --output-csv .\.analysis-output\linux-findings.csv
+python -m login_log_analyzer analyze-windows .\samples\demo_windows_attack.json --output-json .\.analysis-output\windows-report.json --output-csv .\.analysis-output\windows-findings.csv
 ```
 
 O JSON é o relatório estruturado completo: inclui resumo, erros recuperáveis, todas as categorias de findings e, para fontes Windows, as coleções `account_lockouts`, `account_lifecycle` e `brute_force_account_lockout`. Ações de ciclo de vida usam os valores estáveis `created`, `enabled`, `disabled`, `deleted` e `unlocked`. O CSV contém findings heurísticos e correlacionados; observações diretas não são transformadas artificialmente em linhas `finding_type`. Quando há correlação, as linhas `brute_force` e `brute_force_account_lockout` coexistem intencionalmente. Um CSV sem findings contém somente o cabeçalho.
@@ -244,3 +245,7 @@ Os testes cobrem modelos, parsers, regras, pipelines, CLI e as amostras de demon
 ## Segurança dos dados
 
 Os arquivos em `samples/` são pequenos, sintéticos e usam identidades fictícias e redes reservadas para documentação. Logs de produção podem conter usernames, hostnames e endereços sensíveis; eles não devem ser adicionados ao repositório sem sanitização adequada. Credenciais e segredos nunca devem ser armazenados nas amostras.
+
+Entradas são tratadas como não confiáveis. Antes da exibição no terminal, caracteres de controle são representados por escapes visíveis; em CSV, textos que poderiam ser interpretados como fórmulas por planilhas recebem um prefixo de apóstrofo. Os valores normalizados e o JSON preservam o conteúdo semântico original. A aplicação opera localmente e não transmite dados.
+
+Relatórios podem conter usernames, IPs, domínios, hostnames e timestamps de segurança. Armazene-os com permissões adequadas e fora de repositórios públicos. O diretório local `.analysis-output/` é ignorado pelo Git como defesa em profundidade contra inclusão acidental, mas `.gitignore` não é uma fronteira de segurança. Consulte [Segurança](docs/security.md) para o modelo de ameaça e os limites operacionais.
