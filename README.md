@@ -2,7 +2,7 @@
 
 Analisador de autenticação e eventos de segurança Windows para estudo e portfólio de Blue Team. O projeto normaliza telemetria Linux e Windows, aplica regras determinísticas e correlaciona sinais relacionados para destacar atividades que merecem investigação.
 
-A versão declarada no pacote é `0.2.0`. A ferramenta possui escopo local e defensivo, sem alegar prontidão para produção ou substituir um SIEM.
+A versão declarada no pacote é `0.2.1`. A ferramenta possui escopo local e defensivo, sem alegar prontidão para produção ou substituir um SIEM.
 
 ## Capacidades atuais
 
